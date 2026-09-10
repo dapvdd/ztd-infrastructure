@@ -1,0 +1,7 @@
+.env
+.env.*
+backups/*
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
