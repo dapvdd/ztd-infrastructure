@@ -1,0 +1,10 @@
+[Unit]
+Description=ZTD PostgreSQL Backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=david
+WorkingDirectory=/home/david/ztd-server
+ExecStart=/home/david/ztd-server/scripts/backup-db.sh
