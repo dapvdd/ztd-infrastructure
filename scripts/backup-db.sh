@@ -28,3 +28,8 @@ echo "Backup size:"
 du -h "$BACKUP_FILE"
 
 echo "Backup completed successfully."
+
+echo "Cleaning up backups older than 7 days..."
+find "$BACKUP_DIR" -type f -name "ztd-db_*.sql" -mtime +7 -delete
+
+echo "Backup retention cleanup completed."
