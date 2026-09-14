@@ -21,7 +21,7 @@ check $? "PostgreSQL"
 docker inspect -f '{{.State.Health.Status}}' ztd-nginx 2>/dev/null | grep -q healthy
 check $? "Nginx"
 
-systemctl is-active --quiet ssh
+systemctl is-active --quiet ssh.socket
 check $? "SSH"
 
 sudo ufw status | grep -q "Status: active"
