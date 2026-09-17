@@ -1,0 +1,16 @@
+[Unit]
+Description=ZTD IoT Edge Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/iot-agent
+EnvironmentFile=/etc/iot-agent/config.env
+ExecStart=/opt/iot-agent/venv/bin/python /opt/iot-agent/agent.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
