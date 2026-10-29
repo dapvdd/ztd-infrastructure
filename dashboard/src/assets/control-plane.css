@@ -1,0 +1,11 @@
+.control-page { color: #cbd5e1; max-width: 1200px; margin: auto; line-height: 1.6; }
+.control-page h2 { color: #f1f5f9; font-size: 2rem; margin: .5rem 0; }
+.control-page h3 { color: #e2e8f0; }
+.control-card { background: #111c2e; border: 1px solid #344256; border-radius: 12px; padding: 24px; margin: 16px 0; }
+.control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
+.control-page a { color: #7dd3fc; }
+.control-page button { padding: 10px 16px; background: #164e63; color: #f0f9ff; border: 1px solid #67e8f9; border-radius: 6px; cursor: pointer; }
+.control-page button:disabled { opacity: .6; cursor: wait; }
+.role-badge { display: inline-block; border: 1px solid #64748b; padding: 3px 10px; border-radius: 6px; font-size: .8rem; font-weight: 700; }
+:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 4px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
