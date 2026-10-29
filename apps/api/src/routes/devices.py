@@ -1,121 +1,208 @@
-from typing import List
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-import secrets
+from sqlalchemy import func
 
 from src.database import get_db
-from src.models import Device
-from src.schemas import DeviceWhitelistCreate, DeviceResponse, DeviceDeployRequest
-from src.services.provisioning import execute_provisioning
+from src.models import Device, Telemetry, DeploymentLog
+from src.schemas import DeviceResponse, DeviceConfigPayload, DashboardSummary
+from src.config import settings
+from src.services.device_metrics import (
+    METRICS_KIND,
+    build_metrics_response,
+    temperature_metadata,
+)
+from src.services.mqtt_listener import publish_device_config
+from src.services.presence import ONLINE_WINDOW_SECONDS, device_status
 
-router = APIRouter(prefix="/api/v1/devices", tags=["Devices"])
+router = APIRouter(prefix="/api/v1/devices", tags=["Devices & Monitoring"])
 
-@router.post("/whitelist", response_model=DeviceResponse, status_code=status.HTTP_201_CREATED)
-def whitelist_device(payload: DeviceWhitelistCreate, db: Session = Depends(get_db)):
-    """Pre-register a legitimate Raspberry Pi MAC address with an immediate unique token."""
-    existing = db.query(Device).filter(Device.mac_address == payload.mac_address).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Device with MAC address '{payload.mac_address}' is already registered."
-        )
 
-    # Assign token from payload, or generate a cryptographically secure 128-bit token
-    assigned_token = payload.device_token or f"ztd_tok_{secrets.token_hex(16)}"
-    # Check for token uniqueness
-    token_conflict = db.query(Device).filter(Device.device_token == assigned_token).first()
-    if token_conflict:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provided device_token is already in use by another device."
-        )
-    device = Device(
-        mac_address=payload.mac_address,
-        name=payload.name,
-        device_token=assigned_token,
-        ip_address=payload.ip_address,
-        ssh_user=payload.ssh_user,
-        ssh_port=payload.ssh_port,
-        status="WHITELISTED"
-    )
-    db.add(device)
-    db.commit()
-    db.refresh(device)
-    return device
+def _serialize_device(device, now, db: Optional[Session] = None):
+    """API shape with the status computed from last_seen (backend source of truth).
 
-@router.get("", response_model=List[DeviceResponse])
-def list_devices(db: Session = Depends(get_db)):
-    """List all registered IoT devices and their current status."""
-    return db.query(Device).order_by(Device.created_at.desc()).all()
-
-@router.get("/{device_id}", response_model=DeviceResponse)
-def get_device(device_id: UUID, db: Session = Depends(get_db)):
-    """Retrieve details of a specific device by its UUID."""
-    device = db.query(Device).filter(Device.id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found.")
-    return device
-
-@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_device(device_id: UUID, db: Session = Depends(get_db)):
-    """Remove a device from the whitelist."""
-    device = db.query(Device).filter(Device.id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found.")
-    db.delete(device)
-    db.commit()
-    return None
-
-@router.post("/{device_id}/deploy")
-def trigger_deployment(
-    device_id: UUID,
-    payload: DeviceDeployRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
+    ``devices.status`` in the database is never aged by the listener, so it must not
+    be returned as-is; doing so would report a dead device as ONLINE forever.
     """
-    Trigger automated Zero Touch Deployment to the Raspberry Pi over SSH.
-    Verifies physical MAC against whitelist, installs agent, and starts systemd service.
-    """
-    device = db.query(Device).filter(Device.id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found.")
-    target_ip = payload.ip_address or device.ip_address
-    if not target_ip:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Target IP address must be provided in payload or pre-registered in device record."
-        )
-    # Run provisioning as background task so API responds immediately
-    background_tasks.add_task(
-        execute_provisioning,
-        device_id=device.id,
-        ip_address=target_ip,
-        ssh_password=payload.ssh_password,
-        ssh_port=payload.ssh_port or device.ssh_port or 22,
-        mqtt_host=payload.mqtt_host
-    )
-
-    return {
-        "message": f"Zero Touch Deployment initiated for device '{device.mac_address}' at {target_ip}.",
-        "status": "PROVISIONING"
+    data = {
+        "id": device.id,
+        "hostname": device.hostname,
+        "room_id": device.room_id,
+        "ip_address": device.ip_address,
+        "status": device_status(device.last_seen, now),
+        "created_at": device.created_at,
+        "last_seen": device.last_seen,
+        "uptime_seconds": None,
+        "cpu_temp": None,
+        "modules": [],
     }
 
+    if db is not None:
+        latest_tel = (
+            db.query(Telemetry)
+            .filter(Telemetry.device_id == device.id)
+            .order_by(Telemetry.recorded_at.desc())
+            .first()
+        )
+        if latest_tel:
+            if latest_tel.cpu_temp is not None:
+                data["cpu_temp"] = float(latest_tel.cpu_temp)
+            if latest_tel.uptime_seconds is not None:
+                data["uptime_seconds"] = int(latest_tel.uptime_seconds)
+            elif isinstance(latest_tel.payload, dict):
+                data["uptime_seconds"] = latest_tel.payload.get("uptime_seconds")
+
+        logs = (
+            db.query(DeploymentLog)
+            .filter(DeploymentLog.device_id == device.id)
+            .order_by(DeploymentLog.created_at.desc(), DeploymentLog.id.desc())
+            .all()
+        )
+        latest_by_stage = {}
+        for log in logs:
+            if log.stage and log.stage not in latest_by_stage:
+                latest_by_stage[log.stage] = log.status.lower() if log.status else ""
+        data["modules"] = [
+            stage for stage, status in latest_by_stage.items() if status == "success"
+        ]
+
+    return data
+
+@router.get("/summary", response_model=DashboardSummary)
+def get_dashboard_summary(db: Session = Depends(get_db)):
+    """Mengisi 4 Kartu Metrik di Dashboard Utama."""
+    now = datetime.now(timezone.utc)
+    threshold = now - timedelta(seconds=ONLINE_WINDOW_SECONDS)
+
+    total = db.query(Device).count()
+    online = db.query(Device).filter(Device.last_seen >= threshold).count()
+    offline = total - online
+    rooms = db.query(func.count(func.distinct(Device.room_id))).scalar() or 0
+
+    return DashboardSummary(
+        total_devices=total,
+        online_devices=online,
+        offline_devices=offline,
+        rooms_count=rooms
+    )
+
+@router.get("", response_model=List[DeviceResponse])
+def list_devices(room_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """Menampilkan tabel inventaris perangkat."""
+    query = db.query(Device)
+    if room_id:
+        query = query.filter(Device.room_id == room_id)
+    now = datetime.now(timezone.utc)
+    return [_serialize_device(device, now, db) for device in query.order_by(Device.created_at.desc()).all()]
+
+@router.get("/{device_id}", response_model=DeviceResponse)
+def get_device(device_id: str, db: Session = Depends(get_db)):
+    """Mengambil detail satu Raspberry Pi."""
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
+    return _serialize_device(device, datetime.now(timezone.utc), db)
+
+@router.post("/{device_id}/config", status_code=status.HTTP_200_OK)
+def set_device_config(device_id: str, payload: DeviceConfigPayload, db: Session = Depends(get_db)):
+    """
+    Kirim Desired State ke Raspi via MQTT Retained.
+    Raspi akan membaca konfigurasi ini dan memasang modul yang diminta.
+    """
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
+
+    if payload.room_id:
+        device.room_id = payload.room_id
+        db.commit()
+
+    config_dict = payload.model_dump()
+    config_dict["device_id"] = device_id
+    publish_device_config(device_id, config_dict)
+
+    return {
+        "message": f"Konfigurasi modul berhasil dikirim ke {device_id}.",
+        "config": config_dict
+    }
+
+@router.get("/{device_id}/metrics")
+def get_device_metrics(device_id: str, db: Session = Depends(get_db)):
+    """Latest device-metrics v1 sample plus explicit freshness metadata.
+
+    Returns HTTP 200 with ``available: false`` when the device has never
+    published v1 metrics. This lets the dashboard explain the missing data
+    instead of treating it as an API failure or inventing zeroes.
+    """
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
+
+    now = datetime.now(timezone.utc)
+    latest = (
+        db.query(Telemetry)
+        .filter(
+            Telemetry.device_id == device_id,
+            Telemetry.payload["kind"].astext == METRICS_KIND,
+        )
+        .order_by(Telemetry.recorded_at.desc())
+        .first()
+    )
+    response = build_metrics_response(
+        latest,
+        now,
+        stale_after_seconds=settings.DEVICE_METRICS_STALE_SECONDS,
+    )
+    response["device_id"] = device_id
+    response["device_status"] = device_status(device.last_seen, now)
+    return response
+
+
 @router.get("/{device_id}/telemetry")
-def get_device_telemetry(device_id: UUID, limit: int = 20, db: Session = Depends(get_db)):
-    """Retrieve the latest telemetry data (CPU temp, uptime) received from the Pi."""
-    from src.models import Telemetry
-    telemetry_records = db.query(Telemetry)\
+def get_device_telemetry(device_id: str, limit: int = 50, db: Session = Depends(get_db)):
+    """Data untuk kurva grafik suhu CPU (Line Chart).
+
+    Metrics rows share the telemetry table for storage but are excluded here:
+    ``/metrics`` is their API. The unit is only reported when the stored payload
+    actually contains it; legacy Fahrenheit samples stay unlabeled.
+    """
+    records = db.query(Telemetry)\
         .filter(Telemetry.device_id == device_id)\
+        .filter(func.coalesce(Telemetry.payload["kind"].astext, "") != METRICS_KIND)\
         .order_by(Telemetry.recorded_at.desc())\
         .limit(limit)\
         .all()
-    return telemetry_records
+    # Balik urutan agar kronologis (dari waktu terlama ke terbaru) untuk grafik
+    records.reverse()
+    response = []
+    for record in records:
+        metadata = temperature_metadata(record.payload)
+        response.append({
+            "timestamp": record.recorded_at.isoformat(),
+            "cpu_temp": float(record.cpu_temp) if record.cpu_temp is not None else None,
+            "unit": metadata["unit"],
+            "unit_source": metadata["unit_source"],
+            "schema_version": metadata["schema_version"],
+            "room_id": metadata["room_id"],
+            "error": metadata["error"],
+        })
+    return response
 
 @router.get("/{device_id}/logs")
-def get_deployment_logs(device_id: UUID, db: Session = Depends(get_db)):
-    """View step-by-step deployment audit logs for a device."""
-    from src.models import DeploymentLog
-    logs = db.query(DeploymentLog).filter(DeploymentLog.device_id == device_id).order_by(DeploymentLog.created_at.asc()).all()
-    return logs
+def get_device_logs(device_id: str, db: Session = Depends(get_db)):
+    """Riwayat status modul (installing, success, failed)."""
+    return db.query(DeploymentLog)\
+        .filter(DeploymentLog.device_id == device_id)\
+        .order_by(DeploymentLog.created_at.desc())\
+        .all()
+
+@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_device(device_id: str, db: Session = Depends(get_db)):
+    """Hapus perangkat dari database."""
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
+    db.delete(device)
+    db.commit()
+    return None

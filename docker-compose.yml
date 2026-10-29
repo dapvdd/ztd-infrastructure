@@ -32,6 +32,8 @@ services:
       - "80:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+      - ../ztd-dashboard/dist:/usr/share/nginx/html:ro
     networks:
       - ztd-network
     healthcheck:
@@ -45,6 +47,31 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  ztd-backend:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    image: ztd-backend:latest
+    container_name: ztd-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: ztd-db
+      MQTT_HOST: ztd-mqtt
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - ./apps/api/src:/app/src
+      - ./apps/agent:/app/agent:ro
+    networks:
+      - ztd-network
+    depends_on:
+      ztd-db:
+        condition: service_healthy
+      ztd-mqtt:
+        condition: service_started
 
   ztd-mqtt:
     image: eclipse-mosquitto:2

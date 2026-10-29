@@ -1,7 +1,40 @@
+# Credentials & Environment
 .env
 .env.*
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+venv/
+.venv/
+.pytest_cache/
+
+# Node.js & Frontend (apps/dashboard)
+node_modules/
+dist/
+dist-*/
+.vite/
+
+# Database Dumps & Backups
 backups/*
-*.swp
-*.swo
+!backups/.gitkeep
+*.partial
+
+# Security Credentials
+nginx/.htpasswd
+nginx/.htpasswd.bak-*
+
+# Editor & OS Artifacts
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.bak
+*.bak-*
+*.save
+.vscode/
+.idea/
