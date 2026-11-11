@@ -139,3 +139,49 @@ def test_postgres_migration_preserves_legacy_tables(postgres):
             (migration_dir / "003_provisioning_v2.up.sql").read_text()
         )
         connection.execute(text("DROP TABLE devices"))
+
+
+# ============================================================
+# F-08: fresh-DB init must include the provisioning v2 schema
+# ============================================================
+#
+# The docker entrypoint of the postgres image runs postgres/init/*.sql in
+# lexical order on first boot only. Before this remediation only 01-schema.sql
+# existed there, so a FRESH deployment silently lacked every
+# provisioning_* table and the API started broken. The init copy below is a
+# drift guard: it must stay byte-identical to the canonical migration.
+
+INIT_DIR = Path(__file__).resolve().parents[3] / "postgres" / "init"
+MIGRATION_DIR = Path(__file__).resolve().parents[3] / "postgres" / "migrations"
+
+
+def test_fresh_init_includes_provisioning_v2_schema():
+    init_file = INIT_DIR / "02-provisioning-v2.sql"
+    assert init_file.is_file(), (
+        "postgres/init/02-provisioning-v2.sql missing: fresh deployments "
+        "would boot without the provisioning v2 tables (F-08)"
+    )
+
+
+def test_fresh_init_matches_migration_003_exactly():
+    """Drift guard: init copy == canonical 003 up migration (byte-identical)."""
+    init_sql = (INIT_DIR / "02-provisioning-v2.sql").read_text(encoding="utf-8")
+    migration_sql = (MIGRATION_DIR / "003_provisioning_v2.up.sql").read_text(
+        encoding="utf-8"
+    )
+    assert init_sql == migration_sql, (
+        "postgres/init/02-provisioning-v2.sql drifted from "
+        "postgres/migrations/003_provisioning_v2.up.sql — update the init copy"
+    )
+
+
+def test_fresh_init_creates_all_v2_tables():
+    """Every provisioning v2 table must appear in the init copy."""
+    init_sql = (INIT_DIR / "02-provisioning-v2.sql").read_text(encoding="utf-8")
+    for table in (
+        "provisioning_devices",
+        "provisioning_modules",
+        "provisioning_assignments",
+        "provisioning_approval_events",
+    ):
+        assert f"CREATE TABLE {table}" in init_sql
