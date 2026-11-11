@@ -209,6 +209,25 @@ def run_agent_loop(
     base_url = _provisioning_base_url()
     auth = (device_id, password)
 
+    # F-12: TLS trust for private VPS addresses. The provisioning/monitoring
+    # endpoints commonly use internal CAs or IPs, so the operator points
+    # ZTD_TLS_CA_BUNDLE at a CA bundle that includes the issuing CA. The cert
+    # presented by the server MUST carry a SAN matching the URL host (an IP
+    # SAN for literal IPs). Disabling verification is not supported by design;
+    # verification stays ON even without the env var (system trust store).
+    ca_bundle = os.environ.get("ZTD_TLS_CA_BUNDLE", "").strip()
+    verify: str | bool
+    if ca_bundle:
+        verify = ca_bundle
+        if not os.path.isfile(ca_bundle):
+            raise RuntimeError(
+                f"ZTD_TLS_CA_BUNDLE points to a missing file: {ca_bundle!r}"
+            )
+    else:
+        verify = True
+    # Shared timeout for all calls in the loop.
+    timeout = httpx.Timeout(15.0)
+
     state = load_state(state_path)
     state["device_id"] = device_id
     save_state(state_path, state)
@@ -221,7 +240,8 @@ def run_agent_loop(
                 f"{base_url}/api/v2/provisioning/register",
                 json=build_registration_payload(device_id),
                 auth=auth,
-                timeout=15,
+                timeout=timeout,
+                verify=verify,
             )
             if resp.status_code not in (200, 422):  # 422 = already registered
                 logger.warning("Register returned %s; will retry", resp.status_code)
@@ -233,7 +253,8 @@ def run_agent_loop(
             status_resp = httpx.get(
                 f"{base_url}/api/v2/provisioning/status",
                 auth=auth,
-                timeout=15,
+                timeout=timeout,
+                verify=verify,
             )
             status_resp.raise_for_status()
             device_status = status_resp.json()
@@ -245,7 +266,8 @@ def run_agent_loop(
                 manifest_resp = httpx.get(
                     f"{base_url}/api/v2/provisioning/manifest",
                     auth=auth,
-                    timeout=15,
+                    timeout=timeout,
+                    verify=verify,
                 )
                 if manifest_resp.status_code == 200:
                     manifest = manifest_resp.json()

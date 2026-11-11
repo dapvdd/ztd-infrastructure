@@ -25,10 +25,27 @@ def token_guard(value: HTTPAuthorizationCredentials | None, variable: str) -> No
     if value is None:
         raise HTTPException(401, "Authentication required")
     expected = os.environ.get(variable, "")
-    if len(expected) < 32:
+    if len(expected) < MIN_CREDENTIAL_ENTROPY_BITS // 4:
         raise HTTPException(503, "Authentication service not configured")
     if not secrets.compare_digest(value.credentials.encode(), expected.encode()):
         raise HTTPException(401, "Invalid credentials")
+
+
+# Minimum accepted entropy for server-issued and operator-supplied credentials,
+# expressed in bits. 128 bits = 32 hex/base64ish chars (4 bits per char in the
+# common hex issuance format). This is a documented floor, not a strength
+# meter: it bounds the shortest secret token_guard will accept.
+#
+# Credential hashing assumption (F-14) — reviewed, no behavior change:
+# credential_hash() is plain SHA-256 over a server-GENERATED 256-bit password
+# (secrets.token_urlsafe(32)). Because the input is high-entropy random and
+# never a human-chosen password, unsalted fast SHA-256 is acceptable here:
+# dictionary/parallel attacks gain nothing against 256 bits of randomness, and
+# a slow KDF (bcrypt/argon2) would add cost without added assurance. If this
+# function is ever extended to hash HUMAN passwords, it MUST switch to a
+# memory-hard KDF with per-credential salt. The plain digest also enables the
+# constant-time comparison in device_identity().
+MIN_CREDENTIAL_ENTROPY_BITS = 128
 
 
 def admin(value: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:

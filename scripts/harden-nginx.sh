@@ -16,12 +16,19 @@ DRY="${DRY_RUN:-0}"
 TS="$(date +%Y%m%d-%H%M%S)"
 ADMIN_USER="${ADMIN_USER:-admin}"
 die() { echo "ERROR: $*" >&2; exit 1; }
+die2() { echo "ERROR: $*" >&2; exit 2; }
 
 [ -f docker-compose.yml ] && [ -f nginx/default.conf ] || die "jalankan dari ~/ztd-infrastructure"
 command -v openssl >/dev/null || die "openssl tidak ada"
 command -v python3 >/dev/null || die "python3 tidak ada"
 
 if [ -z "${ADMIN_PASS:-}" ]; then
+  # F-15: automation-safe mode. NONINTERACTIVE=1 never prompts; without a
+  # terminal or a provided password the script must fail with a distinct
+  # exit code (2) instead of hanging a CI/cron invocation on read.
+  if [ "${NONINTERACTIVE:-0}" = "1" ] || [ ! -t 0 ]; then
+    die2 "ADMIN_PASS tidak diset dan prompt tidak mungkin (NONINTERACTIVE). Set env ADMIN_PASS." # exit 2
+  fi
   read -r -s -p "Password untuk user '$ADMIN_USER': " ADMIN_PASS; echo
   read -r -s -p "Ulangi password: " ADMIN_PASS2; echo
   [ "$ADMIN_PASS" = "$ADMIN_PASS2" ] || die "password tidak sama"
