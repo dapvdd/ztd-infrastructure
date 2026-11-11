@@ -50,6 +50,8 @@ import agent_v2
 import hubbrain_adapter
 import esp_node_adapter
 
+import importlib
+
 
 def _b64(user: str, password: str) -> str:
     import base64
@@ -428,6 +430,29 @@ class TestScenario17_ManifestBlockedWithoutApproval:
             headers={"Authorization": f"Basic {creds}"},
         )
         assert manifest_resp.status_code == 403
+
+
+# ============================================================
+# Scenario 21 (F-03): Agent runtime dependencies are declared
+# ============================================================
+
+class TestScenario21_AgentRequirements:
+    AGENT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "agent")
+
+    def _requirements(self) -> str:
+        path = os.path.join(os.path.abspath(self.AGENT_DIR), "requirements.txt")
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_httpx_declared(self):
+        assert "httpx" in self._requirements()
+
+    def test_paho_mqtt_declared(self):
+        assert "paho-mqtt" in self._requirements()
+
+    def test_importable_after_install(self):
+        """httpx must be importable in the test environment (it drives the loop)."""
+        importlib.import_module("httpx")
 
 
 # ============================================================
