@@ -35,6 +35,11 @@ class BootstrapRequest(BaseModel):
     gateway: str = ""
     subnet: str = ""                 # mask (255.255.255.0) atau prefix (24)
     dns: str = ""                    # satu atau beberapa IP, pisah koma/spasi
+    # Sprint 3: ZTD identity and dual-server configuration
+    ztd_device_id: str = ""          # e.g. raspi-abc123; injected as ZTD_DEVICE_ID
+    provisioning_url: str = ""       # Provisioning VPS base URL
+    monitoring_hub_id: str = ""      # HubBrain identity: HUB_ID
+    monitoring_url: str = ""         # Monitoring VPS base URL
 
 
 def _bad(detail: str):
@@ -66,7 +71,8 @@ def _prefix(value: str) -> str:
 
 
 def _build_values(req: BootstrapRequest) -> dict:
-    for name in ("device_name", "wifi_ssid", "wifi_username", "wifi_password"):
+    for name in ("device_name", "wifi_ssid", "wifi_username", "wifi_password",
+                 "ztd_device_id", "provisioning_url", "monitoring_hub_id", "monitoring_url"):
         _check_text(name, getattr(req, name))
 
     conn = req.connection_type.upper().strip()
@@ -116,6 +122,11 @@ def _build_values(req: BootstrapRequest) -> dict:
         "GATEWAY": gateway,
         "SUBNET": subnet,
         "DNS": dns,
+        # Sprint 3: dual-server identity fields (all shlex.quote'd via build_script)
+        "ZTD_DEVICE_ID": req.ztd_device_id,
+        "PROVISIONING_URL": req.provisioning_url,
+        "MONITORING_HUB_ID": req.monitoring_hub_id,
+        "MONITORING_URL": req.monitoring_url,
     }
 
 
