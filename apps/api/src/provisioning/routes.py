@@ -25,6 +25,7 @@ from src.provisioning.schemas import (
     DeviceStatus,
     Enrollment,
     EnrollmentResult,
+    HubConfig,
     Manifest,
     ManifestModule,
     ModuleConfiguration,
@@ -387,4 +388,30 @@ def manifest(
         updated_at=device.updated_at,
         assignment_status="ASSIGNED" if rows else "EMPTY",
         modules=rows,
+        hub_config=hub_config_from_env(),
     )
+
+
+def hub_config_from_env() -> HubConfig | None:
+    """Build the non-secret HubBrain addressing block from server env.
+
+    Returns None unless every variable is set; a partial configuration is
+    treated as unconfigured so devices never receive a half-valid block.
+    """
+    from src.provisioning.schemas import HubConfig
+
+    hub_id = os.environ.get("ZTD_HUBBRAIN_HUB_ID", "").strip()
+    server_url = os.environ.get("ZTD_HUBBRAIN_SERVER_URL", "").strip()
+    mqtt_host = os.environ.get("ZTD_HUBBRAIN_MQTT_HOST", "").strip()
+    mqtt_port_raw = os.environ.get("ZTD_HUBBRAIN_MQTT_PORT", "").strip()
+    if not (hub_id and server_url and mqtt_host and mqtt_port_raw):
+        return None
+    try:
+        return HubConfig(
+            hub_id=hub_id,
+            server_url=server_url,
+            mqtt_host=mqtt_host,
+            mqtt_port=int(mqtt_port_raw),
+        )
+    except ValidationError:
+        return None

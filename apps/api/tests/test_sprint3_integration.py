@@ -50,6 +50,11 @@ import agent_v2
 import hubbrain_adapter
 import esp_node_adapter
 
+
+def _b64(user: str, password: str) -> str:
+    import base64
+    return base64.b64encode(f"{user}:{password}".encode()).decode()
+
 # --- monitoringStatus pure helpers (from dashboard — inline here for self-containment) ---
 from apps.agent import agent_v2 as _agent_v2  # noqa: F401 — verify importable
 
@@ -426,8 +431,84 @@ class TestScenario17_ManifestBlockedWithoutApproval:
 
 
 # ============================================================
-# Scenario 18: Dual-server status classification
+# Scenario 19 (F-02): Manifest carries non-secret hub_config
 # ============================================================
+
+class TestScenario19_ManifestHubConfig:
+    def test_manifest_includes_hub_config_when_env_set(self, client, monkeypatch):
+        monkeypatch.setenv("ZTD_HUBBRAIN_HUB_ID", "hs109rs-hub-01")
+        monkeypatch.setenv("ZTD_HUBBRAIN_SERVER_URL", "https://monitoring.example.com")
+        monkeypatch.setenv("ZTD_HUBBRAIN_MQTT_HOST", "mqtt.example.com")
+        monkeypatch.setenv("ZTD_HUBBRAIN_MQTT_PORT", "8883")
+        password, _ = self._enroll_register_approve(client)
+        manifest_resp = client.get(
+            "/api/v2/provisioning/manifest",
+            headers={"Authorization": f"Basic {_b64('raspi-hubtest', password)}"},
+        )
+        assert manifest_resp.status_code == 200
+        hub = manifest_resp.json().get("hub_config")
+        assert hub == {
+            "hub_id": "hs109rs-hub-01",
+            "server_url": "https://monitoring.example.com",
+            "mqtt_host": "mqtt.example.com",
+            "mqtt_port": 8883,
+        }
+
+    def test_manifest_omits_hub_config_when_env_unset(self, client, monkeypatch):
+        for var in ("ZTD_HUBBRAIN_HUB_ID", "ZTD_HUBBRAIN_SERVER_URL",
+                    "ZTD_HUBBRAIN_MQTT_HOST", "ZTD_HUBBRAIN_MQTT_PORT"):
+            monkeypatch.delenv(var, raising=False)
+        password, _ = self._enroll_register_approve(client)
+        manifest_resp = client.get(
+            "/api/v2/provisioning/manifest",
+            headers={"Authorization": f"Basic {_b64('raspi-hubtest', password)}"},
+        )
+        assert manifest_resp.status_code == 200
+        assert manifest_resp.json().get("hub_config") is None
+
+    def test_manifest_hub_config_never_contains_secrets(self, client, monkeypatch):
+        """F-02 core security property: no HUB_KEY / MQTT_PASS ever in the manifest."""
+        monkeypatch.setenv("ZTD_HUBBRAIN_HUB_ID", "hs109rs-hub-01")
+        monkeypatch.setenv("ZTD_HUBBRAIN_SERVER_URL", "https://monitoring.example.com")
+        monkeypatch.setenv("ZTD_HUBBRAIN_MQTT_HOST", "mqtt.example.com")
+        monkeypatch.setenv("ZTD_HUBBRAIN_MQTT_PORT", "8883")
+        # Placing a would-be secret in an env var the manifest pipeline reads:
+        # the only env vars hub_config_from_env() consumes are the four
+        # non-secret ones. Prove no other env value leaks into the response.
+        monkeypatch.setenv("ZTD_HUBBRAIN_HUB_KEY", "SHOULD-NOT-APPEAR-hub-secret")
+        monkeypatch.setenv("ZTD_HUBBRAIN_MQTT_PASS", "SHOULD-NOT-APPEAR-mqtt-secret")
+        password, _ = self._enroll_register_approve(client)
+        manifest_resp = client.get(
+            "/api/v2/provisioning/manifest",
+            headers={"Authorization": f"Basic {_b64('raspi-hubtest', password)}"},
+        )
+        body = manifest_resp.json()
+        blob = json.dumps(body)
+        assert "hub_key" not in blob.lower()
+        assert "mqtt_pass" not in blob.lower()
+        assert "SHOULD-NOT-APPEAR" not in blob
+
+    def _enroll_register_approve(self, client) -> tuple[str, dict]:
+        from src.provisioning.auth import credential_hash
+        from src.provisioning.models import ProvisioningBase, RegisteredDevice
+        from test_provisioning_v2 import approve
+        # enroll + register via API, then approve via monitoring endpoint
+        enroll = client.post(
+            "/api/v2/provisioning/devices",
+            json={"device_id": "raspi-hubtest"},
+            headers={"Authorization": "Bearer test-admin-token-with-enough-entropy"},
+        )
+        assert enroll.status_code == 201
+        password = enroll.json()["password"]
+        client.post(
+            "/api/v2/provisioning/register",
+            json={"hostname": "raspi-hubtest"},
+            headers={"Authorization": f"Basic {_b64('raspi-hubtest', password)}"},
+        )
+        approve(client, ("raspi-hubtest", password))
+        return password, {}
+
+
 
 class TestScenario18_DualServerStatusClassification:
     """Pure logic — mirrors dashboard monitoringStatus.mjs behavior in Python."""

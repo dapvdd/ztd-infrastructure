@@ -252,12 +252,13 @@ def run_agent_loop(
                     new_hash = compute_manifest_hash(manifest)
                     if new_hash != state.get("manifest_hash"):
                         logger.info("New manifest received (rev %s)", manifest.get("configuration_revision"))
+                        # Apply first; persist hash only after a successful apply
+                        # so a failed write leaves the previous known-good state.
+                        _apply_hubbrain_config(manifest)
                         state["manifest_hash"] = new_hash
                         state["revision"] = manifest.get("configuration_revision", 0)
                         state["applied_at"] = datetime.now(timezone.utc).isoformat()
                         save_state(state_path, state)
-                        # 4. HubBrain handoff
-                        _apply_hubbrain_config(manifest)
                 elif manifest_resp.status_code == 403:
                     logger.info("Manifest denied (403); approval may have expired")
 
@@ -270,12 +271,24 @@ def run_agent_loop(
 
 
 def _apply_hubbrain_config(manifest: dict[str, Any]) -> None:  # pragma: no cover
-    """Write HubBrain .env from manifest hub_config block, if present."""
+    """Write HubBrain .env from manifest hub_config block, if present.
+
+    Secrets (HUB_KEY, MQTT_PASS) never come from the manifest: they are merged
+    from the agent's own environment. The manifest supplies non-secret
+    addressing only. The merged configuration is validated before any write.
+    """
+    import hubbrain_adapter
+
     hub_config = manifest.get("hub_config")
     if not hub_config:
         return
+    merged = dict(hub_config)
+    merged["hub_key"] = os.environ.get("ZTD_HUB_KEY", "")
+    merged["mqtt_pass"] = os.environ.get("ZTD_MQTT_PASS", "")
+    # Fail before writing anything invalid (F-09).
+    hubbrain_adapter.validate_hub_config(merged)
     env_path = os.environ.get("ZTD_HUBBRAIN_ENV_PATH", "/etc/ztd/hubbrain.env")
-    env_content = render_hubbrain_env(hub_config)
+    env_content = render_hubbrain_env(merged)
     tmp = env_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(env_content)

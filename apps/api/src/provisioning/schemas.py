@@ -53,6 +53,20 @@ class ModuleConfiguration(StrictModel):
     sample_interval_seconds: int = Field(default=60, ge=1, le=86400, strict=True)
 
 
+class HubConfig(StrictModel):
+    """Non-secret HubBrain addressing delivered via the manifest.
+
+    Deliberately excludes hub_key and mqtt_pass: Monitoring credentials are
+    provisioned manually on the device (env-only) and never travel through
+    the provisioning API (F-02).
+    """
+
+    hub_id: str = Field(min_length=1, max_length=100)
+    server_url: str = Field(pattern=r"^https://[^\s]+$")
+    mqtt_host: str = Field(min_length=1, max_length=253)
+    mqtt_port: int = Field(ge=1, le=65535)
+
+
 class AssignmentInput(StrictModel):
     configuration: ModuleConfiguration | None = None
 
@@ -71,3 +85,4 @@ class Manifest(StrictModel):
     updated_at: datetime
     assignment_status: Literal["EMPTY", "ASSIGNED"]
     modules: list[ManifestModule]
+    hub_config: HubConfig | None = None
