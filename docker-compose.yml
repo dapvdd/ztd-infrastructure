@@ -82,17 +82,27 @@ services:
     image: eclipse-mosquitto:2
     container_name: ztd-mqtt
     restart: unless-stopped
-    ports:
-      - "${MQTT_PORT:-1883}:1883"
-      - "${MQTT_WS_PORT:-9001}:9001"
+    # F-07: no broker ports published to the host. Backend and gateway agents
+    # reach 1883 over the internal network / Tailscale; the dashboard consumes
+    # MQTT-WS only through the nginx /mqtt location. LAN exposure is a
+    # deliberate, documented operator decision (see mosquitto/README-mqtt-auth.md).
+    expose:
+      - "1883"
+      - "9001"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      # Operator-generated (never committed): docker … mosquitto_passwd -c …
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     networks:
       - ztd-network
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -u dummy -P dummy || exit 0"]
+      # Anonymous is disabled; the healthcheck must authenticate. exit 0 is
+      # intentional ONLY as "broker answered"; -P wrong creds must fail, so we
+      # check the exit status of an authenticated sub instead of swallowing it.
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -u $$MQTT_HEALTH_USER -P $$MQTT_HEALTH_PASS"]
       interval: 30s
       timeout: 5s
       retries: 3

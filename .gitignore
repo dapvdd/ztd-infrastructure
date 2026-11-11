@@ -26,6 +26,9 @@ backups/*
 # Security Credentials
 nginx/.htpasswd
 nginx/.htpasswd.bak-*
+mosquitto/passwd
+nginx/certs/*
+!nginx/certs/.gitkeep
 
 # Editor & OS Artifacts
 .DS_Store

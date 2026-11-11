@@ -1,0 +1,29 @@
+# ZTD MQTT ACL (F-07).
+# Written by operators; mounted read-only at /mosquitto/config/acl.
+#
+# Topic vocabulary:
+#   hs109rs/<sensor>/data  — ESP sensor data forwarded by the gateway
+#   ztd/devices/+/status   — per-device status published by the backend
+#   ztd/devices/+/config   — retained desired-state config (legacy channel)
+#
+# Principles:
+#   - backend: full access (it brokers config and forwards telemetry)
+#   - gateway agent (<gateway-id>): read its own config, write its own status
+#     and sensor topics (pattern rules; first %u = username = gateway id)
+#   - dashboard user: read-only telemetry/status, no writes, no config reads
+
+# ---- backend service -------------------------------------------------------
+user ztd-backend
+topic readwrite #
+
+# ---- gateway agents (one user per Raspberry Pi gateway) --------------------
+# Username convention: gw-<gateway-id>, e.g. gw-raspi-lab-01.
+# %u expands to the username, %c to the MQTT client id.
+pattern write ztd/devices/%u/status
+pattern write hs109rs/#
+pattern read ztd/devices/%u/config
+
+# ---- dashboard (read-only telemetry over WebSocket via nginx) --------------
+user ztd-dashboard
+topic read hs109rs/#
+topic read ztd/devices/+/status
