@@ -8,6 +8,7 @@ from src.routes.modules import router as modules_router
 from src.services.mqtt_listener import start_mqtt_listener, stop_mqtt_listener
 from src.routes.bootstrap import router as bootstrap_router
 from src.provisioning.routes import router as provisioning_router
+from src.routes.dashboard_bff import router as dashboard_bff_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,6 +45,7 @@ app.include_router(devices_router)
 app.include_router(modules_router)
 app.include_router(bootstrap_router)
 app.include_router(provisioning_router)
+app.include_router(dashboard_bff_router)
 
 @app.get("/", tags=["General"])
 def root():
