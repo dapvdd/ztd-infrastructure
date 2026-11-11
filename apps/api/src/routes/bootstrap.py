@@ -325,4 +325,50 @@ echo "Gateway         : $NEW_GATEWAY"
 echo ""
 echo "Device is ready."
 echo "======================================"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 3 (F-01): ZTD Agent V2 installation and lifecycle.
+# Only runs when a ZTD device identity was provided. Skipped otherwise so the
+# bootstrap script remains usable as a plain network configurator.
+# ---------------------------------------------------------------------------
+
+install_ztd_agent_v2() {
+
+    if [ -z "$ZTD_DEVICE_ID" ]; then
+        echo "ZTD_DEVICE_ID empty; skipping Agent V2 installation."
+        return 0
+    fi
+
+    if [ -z "$PROVISIONING_URL" ]; then
+        echo "ERROR: PROVISIONING_URL is required with ZTD_DEVICE_ID."
+        exit 1
+    fi
+
+    echo ""
+    echo "[5/5] Installing ZTD Agent V2..."
+
+    sudo mkdir -p /opt/ztd /etc/ztd /var/lib/ztd
+
+    # /etc/ztd/agent.env — consumed by ztd-agent-v2.service (EnvironmentFile).
+    # Passwords are never echoed here; ZTD_DEVICE_PASSWORD is issued out-of-band
+    # at enrollment and appended by the operator with chmod 600.
+    sudo bash -c "cat > /etc/ztd/agent.env" <<EOF
+ZTD_DEVICE_ID=$ZTD_DEVICE_ID
+ZTD_PROVISIONING_URL=$PROVISIONING_URL
+ZTD_MONITORING_HUB_ID=$MONITORING_HUB_ID
+ZTD_MONITORING_URL=$MONITORING_URL
+EOF
+    sudo chmod 600 /etc/ztd/agent.env
+
+    # Durable state directory owned by the agent user.
+    sudo chown -R ztd:ztd /var/lib/ztd /etc/ztd
+
+    # systemd unit + hardening; ExecStart runs agent_v2.py.
+    sudo systemctl enable --now ztd-agent-v2
+
+    echo "ZTD Agent V2 installed and started."
+}
+
+install_ztd_agent_v2
 '''

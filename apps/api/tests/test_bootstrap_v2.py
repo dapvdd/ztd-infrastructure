@@ -1,5 +1,8 @@
 """Tests for Sprint 3 bootstrap extension: ZTD identity and dual-server config fields."""
 
+import shutil
+import subprocess
+
 import pytest
 from fastapi.testclient import TestClient
 from src.main import app
@@ -104,3 +107,57 @@ class TestBootstrapV2Fields:
         assert resp.status_code == 200
         assert "ZTD_DEVICE_ID=raspi-api-test" in resp.text
         assert "PROVISIONING_URL=https://100.105.163.126" in resp.text
+
+
+class TestBootstrapInstallsAgentV2:
+    """F-01: the generated script must actually install and start Agent V2."""
+
+    def _script(self, **extra) -> str:
+        return build_script(BootstrapRequest(**_wifi_base(**extra)))
+
+    def test_script_contains_agent_install_section(self):
+        script = self._script(ztd_device_id="raspi-edge-01")
+        assert "install_ztd_agent_v2" in script
+
+    def test_script_writes_agent_env_with_identity_fields(self):
+        script = self._script(
+            ztd_device_id="raspi-edge-01",
+            provisioning_url="https://100.105.163.126",
+            monitoring_hub_id="hs109rs-hub-01",
+            monitoring_url="https://192.168.72.245",
+        )
+        assert "/etc/ztd/agent.env" in script
+        assert "ZTD_DEVICE_ID=raspi-edge-01" in script
+        # agent.env maps header vars into ZTD_* names; expansion happens at runtime
+        assert "ZTD_PROVISIONING_URL=$PROVISIONING_URL" in script
+        assert "ZTD_MONITORING_HUB_ID=$MONITORING_HUB_ID" in script
+        assert "ZTD_MONITORING_URL=$MONITORING_URL" in script
+        # header var itself is shlex-quoted
+        assert "PROVISIONING_URL=https://100.105.163.126" in script
+
+    def test_script_enables_systemd_unit(self):
+        script = self._script(ztd_device_id="raspi-edge-01")
+        assert "systemctl enable --now ztd-agent-v2" in script
+
+    def test_agent_block_guarded_by_device_id(self):
+        script = self._script()
+        # The install function is always defined but must no-op without identity.
+        assert '[ -z "$ZTD_DEVICE_ID" ]' in script
+        assert "skipping Agent V2 installation" in script
+
+    def test_agent_block_does_not_touch_legacy_agent(self):
+        script = self._script(ztd_device_id="raspi-edge-01")
+        assert "iot-agent.service" not in script
+
+    def test_generated_script_passes_bash_syntax_check(self):
+        script = self._script(
+            ztd_device_id="raspi-edge-01",
+            provisioning_url="https://100.105.163.126",
+        )
+        bash = shutil.which("bash")
+        if not bash:
+            pytest.skip("bash not available on this platform")
+        proc = subprocess.run(
+            [bash, "-n"], input=script, capture_output=True, text=True, timeout=30
+        )
+        assert proc.returncode == 0, proc.stderr
