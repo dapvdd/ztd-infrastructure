@@ -8,6 +8,7 @@ from src.database import get_db
 from src.models import Device, Telemetry, DeploymentLog
 from src.schemas import DeviceResponse, DeviceConfigPayload, DashboardSummary
 from src.config import settings
+from src.provisioning.models import RegisteredDevice
 from src.services.device_metrics import (
     METRICS_KIND,
     build_metrics_response,
@@ -110,6 +111,8 @@ def set_device_config(device_id: str, payload: DeviceConfigPayload, db: Session 
     Kirim Desired State ke Raspi via MQTT Retained.
     Raspi akan membaca konfigurasi ini dan memasang modul yang diminta.
     """
+    if db.get(RegisteredDevice, device_id) is not None:
+        raise HTTPException(status_code=409, detail="Use authenticated provisioning v2 assignments for this device.")
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
@@ -200,6 +203,8 @@ def get_device_logs(device_id: str, db: Session = Depends(get_db)):
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_device(device_id: str, db: Session = Depends(get_db)):
     """Hapus perangkat dari database."""
+    if db.get(RegisteredDevice, device_id) is not None:
+        raise HTTPException(status_code=409, detail="Provisioning identities cannot be deleted through legacy inventory.")
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
