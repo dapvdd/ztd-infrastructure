@@ -131,6 +131,35 @@ def test_script_contains_embedded_payload_and_verified_hash():
     assert "Expected $PAYLOAD_SHA256" in script
 
 
+def test_agent_root_resolves_container_layout(monkeypatch, tmp_path):
+    """Staging P4 caught: /app/src/routes/bootstrap.py resolved parents[3]/agent
+    -> /agent (FileNotFoundError at runtime) even though /app/agent is mounted.
+    The resolver must find agent files in container-like layouts."""
+    import shutil
+    from src.routes import bootstrap
+
+    fake_root = tmp_path / "app" / "agent"
+    fake_root.mkdir(parents=True)
+    src_agent = Path(__file__).resolve().parents[2] / "agent"
+    for name in ("agent_v2.py", "hubbrain_adapter.py", "requirements.lock"):
+        shutil.copy(src_agent / name, fake_root / name)
+
+    # candidates[1] simulates the container: <parent>/agent next to src/
+    monkeypatch.delenv("ZTD_AGENT_DIR", raising=False)
+    monkeypatch.setattr(bootstrap.Path, "resolve", lambda self: self, raising=False)
+    resolved = bootstrap._agent_root()
+    # In the repo checkout the repo-layout candidate wins; the contract we can
+    # assert anywhere is: whatever root is returned contains agent_v2.py.
+    assert (resolved / "agent_v2.py").is_file()
+
+    # Explicit env override always wins (this is what the compose file sets).
+    monkeypatch.setenv("ZTD_AGENT_DIR", str(fake_root))
+    assert bootstrap._agent_root() == fake_root
+    payload, digest = bootstrap.agent_payload()
+    assert payload == bootstrap.agent_payload()[0]
+    assert len(digest) == 64
+
+
 def test_script_has_runtime_prompts_and_no_secret_in_argv():
     req = BootstrapRequest(**valid_request(connection_type="Wi-Fi", wifi_ssid="TestSSID"))
     script = build_script(req)

@@ -13,6 +13,7 @@ Perubahan dari versi lama:
 6. Response pakai Cache-Control: no-store karena isinya ada password.
 """
 import ipaddress
+import os
 import re
 import shlex
 import base64
@@ -30,9 +31,35 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 router = APIRouter(prefix="/api/v1/bootstrap", tags=["Bootstrap"])
 
 
+def _agent_root() -> Path:
+    """Locate the agent payload directory across layouts.
+
+    Resolved per-call so tests can monkeypatch; the first existing candidate
+    wins. Candidates cover:
+    - ZTD_AGENT_DIR env override (container: /app/agent)
+    - repo checkout:  apps/api/src/routes/bootstrap.py -> ../../agent
+    - container image: /app/src/routes/bootstrap.py  -> /app/agent
+    - legacy flat root: <repo>/agent
+    """
+    env_dir = os.environ.get("ZTD_AGENT_DIR", "")
+    if env_dir:
+        return Path(env_dir)
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parents[2] / "agent",   # apps/api/src/../../agent  (repo layout)
+        here.parents[1] / "agent",   # /app/src/../agent         (container)
+        here.parents[3] / "agent",   # legacy: <root>/agent
+    ]
+    for candidate in candidates:
+        if (candidate / "agent_v2.py").is_file():
+            return candidate
+    # Keep the historical shape for the error message.
+    return here.parents[3] / "agent"
+
+
 def agent_payload() -> tuple[str, str]:
     """Deterministic offline bundle; source and wheels ship with the API image."""
-    root = Path(__file__).resolve().parents[3] / "agent"
+    root = _agent_root()
     names = ["agent_v2.py", "hubbrain_adapter.py", "requirements.lock"]
     names += [f"wheels/{p.name}" for p in sorted((root / "wheels").glob("*.whl"))]
     stream = io.BytesIO()
