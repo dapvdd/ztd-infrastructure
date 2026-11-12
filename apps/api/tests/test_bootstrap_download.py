@@ -131,16 +131,41 @@ def test_script_contains_embedded_payload_and_verified_hash():
     assert "Expected $PAYLOAD_SHA256" in script
 
 
-def test_script_has_runtime_prompts_and_networkmanager_stdin_security():
+def test_script_has_runtime_prompts_and_no_secret_in_argv():
     req = BootstrapRequest(**valid_request(connection_type="Wi-Fi", wifi_ssid="TestSSID"))
     script = build_script(req)
     # Password must NOT be embedded as variable or cleartext
     assert "WIFI_PASSWORD=" not in script.split("echo \"======================================")[0]
     assert "read -r -s" in script
-    # Secret must be passed via stdin to nmcli connection edit, avoiding command line arguments
-    assert "nmcli connection edit" in script
-    assert "set wifi-sec.psk $WIFI_PASSWORD" in script
+    # Secret must reach NetworkManager via the documented keyfile load path
+    # (man nm-settings-keyfile), never as an nmcli argv value.
+    assert "nmcli connection load" in script
+    assert "psk=" in script
+    # Fallback must be the agent-owned secret flag, NOT `modify ... psk <arg>`.
+    assert "wifi-sec.psk-flags 1" in script
     assert "unset WIFI_PASSWORD" in script
+
+
+def test_script_never_passes_secret_to_nmcli_argv():
+    """CWE-214: no `nmcli connection modify ... psk|password <expansion>`."""
+    import re as _re
+    for kwargs in (
+        dict(connection_type="Wi-Fi", wifi_ssid="TestSSID"),
+        dict(connection_type="Wi-Fi", wifi_type="Enterprise", wifi_username="student",
+             wifi_ssid="CampusNet"),
+    ):
+        req = BootstrapRequest(**valid_request(**kwargs))
+        script = build_script(req)
+        body = script
+        argv_leak = _re.search(
+            r"nmcli connection modify[^\n]*\b(?:wifi-sec\.psk|802-1x\.password)\b\s+\S",
+            body,
+        )
+        assert argv_leak is None, f"secret on argv: {argv_leak.group(0) if argv_leak else ''}"
+        assert "nmcli connection edit" not in body  # untrusted REPL contract removed
+        # The 0600 secret staging file is always cleaned up.
+        assert script.count("SECRET_FILE") >= 2
+        assert 'rm -f "$SECRET_FILE"' in body
 
 
 def test_script_has_atomic_writes_and_staging_cleanup():
@@ -151,6 +176,15 @@ def test_script_has_atomic_writes_and_staging_cleanup():
     assert "agent.env.tmp." in script
     assert "ztd-agent-v2.service.tmp." in script
     assert "pip install --no-index" in script
+
+
+def test_pip_failure_aborts_installer():
+    req = BootstrapRequest(**valid_request())
+    script = build_script(req)
+    assert "Notice: Python dependencies ready" not in script
+    assert "dependency installation failed; aborting" in script
+    # Abort must precede service installation/start.
+    assert script.index("dependency installation failed; aborting") < script.index("systemctl enable --now ztd-agent-v2")
 
 
 def test_script_passes_bash_syntax_check():

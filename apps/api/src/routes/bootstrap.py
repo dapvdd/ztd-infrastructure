@@ -261,15 +261,48 @@ if [ "$CONNECTION_TYPE" = "WI-FI" ]; then
             802-1x.anonymous-identity "anonymous" \
             802-1x.phase2-auth pap
 
-        # Pass secret securely via stdin to nmcli to prevent exposure in process table (argv)
-        if ! sudo nmcli connection edit "$CONNECTION_NAME" >/dev/null 2>&1 <<NM_EOF
-set 802-1x.password $WIFI_PASSWORD
-save
-quit
-NM_EOF
-        then
-            sudo nmcli connection modify "$CONNECTION_NAME" 802-1x.password "$WIFI_PASSWORD"
+        # Pass the secret to NetworkManager WITHOUT argv exposure (CWE-214):
+        # documented keyfile workflow (man nm-settings-keyfile). The password
+        # goes through a 0600 temp file; `nmcli connection load` reads the
+        # profile from disk, so the secret never appears in a process listing.
+        # `printf` writes it via a shell builtin; the file is removed before
+        # the script continues (trap already covers abnormal exit).
+        SECRET_FILE=$(mktemp /tmp/ztd-wifi-secret.XXXXXX)
+        chmod 600 "$SECRET_FILE"
+        SECRET_OWNER=$(id -un)
+        printf '802-1x.password=%s\n' "$WIFI_PASSWORD" > "$SECRET_FILE"
+        SECRET_PROFILE=$(mktemp /tmp/ztd-nm-profile.XXXXXX)
+        chmod 600 "$SECRET_PROFILE"
+        sudo cat /etc/NetworkManager/system-connections/"$CONNECTION_NAME".nmconnection \
+            > "$SECRET_PROFILE" 2>/dev/null || true
+        if [ ! -s "$SECRET_PROFILE" ]; then
+            # Profile not yet on disk (still in NM memory): materialize it.
+            nmcli -t -f NAME,UUID connection show | grep -Fxq "$CONNECTION_NAME" || true
+            sudo nmcli connection export "$CONNECTION_NAME" > "$SECRET_PROFILE" 2>/dev/null \
+                || true
         fi
+        if [ -s "$SECRET_PROFILE" ]; then
+            {
+                grep -v '^802-1x\.password=' "$SECRET_PROFILE" || true
+                printf '802-1x.password=%s\n' "$WIFI_PASSWORD"
+            } > "$SECRET_FILE"
+            mv "$SECRET_FILE" "$SECRET_FILE.nmconnection"
+            if sudo nmcli connection load "$SECRET_FILE.nmconnection" 2>/dev/null; then
+                sudo rm -f "$SECRET_FILE.nmconnection"
+            else
+                # Documented fallback: agent-owned secret flag. The secret is
+                # NOT stored and NOT in argv; NM asks its secret agent at
+                # activation time (root session prompt).
+                sudo rm -f "$SECRET_FILE.nmconnection"
+                sudo nmcli connection modify "$CONNECTION_NAME" 802-1x.password-flags 1
+                echo "NOTICE: 802-1x password stored as agent-owned secret (prompted on activation)."
+            fi
+        else
+            # No profile file available: agent-owned secret flag fallback.
+            sudo nmcli connection modify "$CONNECTION_NAME" 802-1x.password-flags 1
+            echo "NOTICE: 802-1x password stored as agent-owned secret (prompted on activation)."
+        fi
+        rm -f "$SECRET_FILE" "$SECRET_PROFILE"
         unset WIFI_PASSWORD
 
     else
@@ -311,15 +344,38 @@ NM_EOF
             wifi.ssid "$WIFI_SSID" \
             wifi-sec.key-mgmt wpa-psk
 
-        # Pass secret securely via stdin to nmcli to prevent exposure in process table (argv)
-        if ! sudo nmcli connection edit "$CONNECTION_NAME" >/dev/null 2>&1 <<NM_EOF
-set wifi-sec.psk $WIFI_PASSWORD
-save
-quit
-NM_EOF
-        then
-            sudo nmcli connection modify "$CONNECTION_NAME" wifi-sec.psk "$WIFI_PASSWORD"
+        # Pass the secret to NetworkManager WITHOUT argv exposure (CWE-214):
+        # documented keyfile workflow (man nm-settings-keyfile). The PSK goes
+        # through a 0600 temp file consumed by `nmcli connection load`, so it
+        # never appears in a process listing.
+        SECRET_FILE=$(mktemp /tmp/ztd-wifi-secret.XXXXXX)
+        chmod 600 "$SECRET_FILE"
+        SECRET_PROFILE=$(mktemp /tmp/ztd-nm-profile.XXXXXX)
+        chmod 600 "$SECRET_PROFILE"
+        sudo cat /etc/NetworkManager/system-connections/"$CONNECTION_NAME".nmconnection \
+            > "$SECRET_PROFILE" 2>/dev/null || true
+        if [ -s "$SECRET_PROFILE" ]; then
+            {
+                grep -v '^psk=' "$SECRET_PROFILE" | grep -v '^802-1x\.password=' || true
+                printf 'psk=%s\n' "$WIFI_PASSWORD"
+            } > "$SECRET_FILE"
+            mv "$SECRET_FILE" "$SECRET_FILE.nmconnection"
+            if sudo nmcli connection load "$SECRET_FILE.nmconnection" 2>/dev/null; then
+                sudo rm -f "$SECRET_FILE.nmconnection"
+            else
+                # Documented fallback: agent-owned secret flag. The PSK is
+                # NOT stored and NOT in argv; NM asks its secret agent at
+                # activation time (root session prompt).
+                sudo rm -f "$SECRET_FILE.nmconnection"
+                sudo nmcli connection modify "$CONNECTION_NAME" wifi-sec.psk-flags 1
+                echo "NOTICE: WPA-PSK stored as agent-owned secret (prompted on activation)."
+            fi
+        else
+            # No profile file available: agent-owned secret flag fallback.
+            sudo nmcli connection modify "$CONNECTION_NAME" wifi-sec.psk-flags 1
+            echo "NOTICE: WPA-PSK stored as agent-owned secret (prompted on activation)."
         fi
+        rm -f "$SECRET_FILE" "$SECRET_PROFILE"
         unset WIFI_PASSWORD
 
     fi
@@ -468,12 +524,18 @@ install_ztd_agent_v2() {
 
     tar -xzf "$STAGING_DIR/payload.tar.gz" -C "$STAGING_DIR"
 
-    # Install verified dependencies from offline wheels
+    # Install verified dependencies from offline wheels.
+    # F: pip failure must ABORT the installer (never continue without the
+    # agent's declared runtime dependencies; masking it made the agent crash
+    # later with an unexplained ImportError).
     if [ -d "$STAGING_DIR/wheels" ] && [ -f "$STAGING_DIR/requirements.lock" ]; then
         echo "Installing Agent V2 dependencies from verified offline wheels..."
-        python3 -m pip install --no-index --find-links="$STAGING_DIR/wheels" --require-hashes -r "$STAGING_DIR/requirements.lock" --break-system-packages 2>/dev/null \
-            || python3 -m pip install --no-index --find-links="$STAGING_DIR/wheels" --require-hashes -r "$STAGING_DIR/requirements.lock" 2>/dev/null \
-            || echo "Notice: Python dependencies ready."
+        if ! python3 -m pip install --no-index --find-links="$STAGING_DIR/wheels" --require-hashes -r "$STAGING_DIR/requirements.lock" --break-system-packages >/dev/null 2>&1; then
+            if ! python3 -m pip install --no-index --find-links="$STAGING_DIR/wheels" --require-hashes -r "$STAGING_DIR/requirements.lock" >/dev/null 2>&1; then
+                echo "ERROR: Agent V2 dependency installation failed; aborting before service start." >&2
+                exit 1
+            fi
+        fi
     fi
 
     # Install executables to /opt/ztd atomically
