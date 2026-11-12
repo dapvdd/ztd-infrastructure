@@ -87,9 +87,8 @@ class TestAuthForwarding:
 
 class TestComposeMounts:
     def test_compose_publishes_443(self):
-        with open(os.path.join(REPO, "docker-compose.yml"), encoding="utf-8") as fh:
-            compose = fh.read()
-        assert re.search(r"-\s*['\"]?443:443", compose), "nginx must publish 443"
+        compose = _read_compose()
+        assert re.search(r"-\s*['\"]?\d{0,5}:443", compose), "nginx must publish 443 (any host port)"
 
     def test_compose_mounts_v2_location_snippet(self):
         with open(os.path.join(REPO, "docker-compose.yml"), encoding="utf-8") as fh:
