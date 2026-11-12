@@ -27,13 +27,28 @@ Users required by the committed ACL:
 | `gw-<gateway-id>` | one per Raspberry Pi gateway agent          | write own status + sensor topics |
 | `ztd-dashboard`   | browser WebSocket (via nginx `/mqtt`)       | read-only telemetry/status       |
 
-## 2. Restart the broker
+## 2. File permissions (mosquitto 2.x requirement)
+
+The broker refuses to load (or silently fails auth on) a passwd file that is
+world-readable or not owned by its service user. Inside the container the
+broker runs as UID 1883 (`mosquitto`), so on the host:
+
+```bash
+chown 1883:1883 mosquitto/passwd   # or the host user mapped into the container
+chmod 600 mosquitto/passwd
+```
+
+Also: `mosquitto.conf` and `acl` MUST have LF line endings. mosquitto 2.x
+parses CRLF values literally (`allow_anonymous false\r` is not recognized),
+which silently leaves the broker misconfigured. `.gitattributes` enforces LF.
+
+## 3. Restart the broker
 
 ```bash
 docker compose up -d ztd-mqtt
 ```
 
-## 3. Where each component gets its credentials
+## 4. Where each component gets its credentials
 
 | Component            | Credential source                                                     |
 |----------------------|-----------------------------------------------------------------------|
@@ -42,14 +57,14 @@ docker compose up -d ztd-mqtt
 | Dashboard (browser)  | MQTT over WebSocket is **not authenticated at the broker** today; the nginx `/mqtt` location is the only path and sits behind the BFF session story (F-04). Do not publish the 9001 port. |
 | ESP nodes            | unchanged — they publish to the **gateway's local Mosquitto on the Pi** (secrets.h at flash time), never to this broker |
 
-## 4. ESP compatibility (preserved)
+## 5. ESP compatibility (preserved)
 
 ESP firmware keeps its flash-time `secrets.h` credentials against the
 **gateway-side** Mosquitto on the Pi. That broker is a separate deployment
 concern; this compose file only governs the VPS broker. No firmware change is
 required by this remediation.
 
-## 5. Verification (documented, not run on the dev host)
+## 6. Verification (documented, not run on the dev host)
 
 ```bash
 # Anonymous must fail:
@@ -60,6 +75,16 @@ mosquitto_sub -h <vps> -p 1883 -u ztd-backend -P '...' -t 'hs109rs/#' -C 1 -v
 mosquitto_pub -h <vps> -p 1883 -u ztd-dashboard -P '...' -t 'hs109rs/ts/data' -m '{"x":1}'
 # expect: Not authorized / ACL denial
 ```
+
+Denial visibility: a QoS 0 denied publish is dropped silently and
+`mosquitto_pub` still exits 0. Use QoS 1 (broker replies PUBACK reason code
+"Not authorized", `mosquitto_pub` prints an error and exits non-zero) or MQTT
+v5 (reason codes surfaced directly) when verifying ACL denials.
+
+Gateway ACL blocks: `pattern` rules in mosquitto apply to EVERY user, so
+gateway grants must be explicit `user gw-<id>` blocks in `acl` (see the
+template in that file). Never add `pattern write <broad-topic>` — it would
+silently grant the read-only dashboard user write access.
 
 These commands were not executed here (no Docker on the remediation host);
 container-level verification is listed as a remaining external dependency in

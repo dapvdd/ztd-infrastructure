@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     # MQTT
     MQTT_HOST: str = os.getenv("MQTT_HOST", "mqtt")
     MQTT_PORT: int = int(os.getenv("MQTT_PORT", "1883"))
+    # F-07: broker refuses anonymous connections; the listener must present
+    # credentials from the operator's .env (never committed to git).
+    MQTT_USER: str = os.getenv("MQTT_USER", "")
+    MQTT_PASS: str = os.getenv("MQTT_PASS", "")
 
     # App
     API_PORT: int = int(os.getenv("API_PORT", "8000"))

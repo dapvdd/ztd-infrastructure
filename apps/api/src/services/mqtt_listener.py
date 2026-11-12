@@ -205,6 +205,12 @@ mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
+# F-07: the broker disables anonymous access, so the listener must present
+# credentials from the operator's .env. Empty MQTT_USER keeps the old
+# anonymous behavior for local/test brokers that allow it.
+if settings.MQTT_USER:
+    mqtt_client.username_pw_set(settings.MQTT_USER, settings.MQTT_PASS)
+
 def publish_device_config(device_id: str, config_dict: dict):
     """Mengirim Desired State ke Raspi sebagai RETAINED MESSAGE."""
     topic = f"iot/device/{device_id}/config"

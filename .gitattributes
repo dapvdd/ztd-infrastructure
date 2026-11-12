@@ -1,0 +1,6 @@
+# mosquitto configs MUST keep LF line endings: mosquitto 2.x parses CRLF
+# values literally and silently misconfigures the broker (seen live in
+# staging: allow_anonymous "false\r" was not recognized).
+mosquitto/*.conf text eol=lf
+mosquitto/acl text eol=lf
+*.sh text eol=lf

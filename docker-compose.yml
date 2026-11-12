@@ -68,6 +68,12 @@ services:
     environment:
       POSTGRES_HOST: ztd-stage-db
       MQTT_HOST: ztd-stage-mqtt
+      # F-07: broker rejects anonymous connections; credentials come from the
+      # operator's .env (MQTT_USER / MQTT_PASS, never committed). Declared
+      # here so the container always has them when present in .env; empty
+      # values fall back to the listener's anonymous-connect behavior.
+      MQTT_USER: ${MQTT_USER:-}
+      MQTT_PASS: ${MQTT_PASS:-}
     ports:
       - "127.0.0.1:${API_PORT:-18000}:8000"
     volumes:
@@ -93,10 +99,15 @@ services:
       - "1883"
       - "9001"
     # Credentials for the authenticated healthcheck; injected from the
-    # operator's .env (never committed). Healthcheck passes -u/-P from these.
+    # operator's .env (never committed). The healthcheck reuses the backend
+    # listener's credentials (MQTT_USER / MQTT_PASS) so there is exactly one
+    # source of truth — drift between two variable sets caused a silent
+    # unhealthy state in staging (stale MQTT_HEALTH_PASS). The healthcheck
+    # subscribes to $SYS/#, which requires `topic read $SYS/#` in the ACL
+    # for this user (a bare `#` never matches $-prefixed topics).
     environment:
-      MQTT_HEALTH_USER: ${MQTT_HEALTH_USER}
-      MQTT_HEALTH_PASS: ${MQTT_HEALTH_PASS}
+      MQTT_HEALTH_USER: ${MQTT_USER:-}
+      MQTT_HEALTH_PASS: ${MQTT_PASS:-}
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       # Operator-generated (never committed): docker … mosquitto_passwd -c …
