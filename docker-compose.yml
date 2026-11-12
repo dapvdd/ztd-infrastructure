@@ -33,7 +33,10 @@ services:
       - "443:443"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./nginx/provisioning-v2.location.conf:/etc/nginx/conf.d/provisioning-v2.location.conf:ro
+      # location snippets must NOT live in conf.d/ (nginx parses every
+      # conf.d/*.conf at http level, where `location` is illegal). They are
+      # mounted under snippets/ and included from inside the TLS server block.
+      - ./nginx/provisioning-v2.location.conf:/etc/nginx/snippets/provisioning-v2.location.conf:ro
       - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
       - ../ztd-dashboard/dist:/usr/share/nginx/html:ro
       # TLS certificates (fullchain.pem, privkey.pem) — provisioned out-of-band

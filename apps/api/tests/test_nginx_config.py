@@ -23,6 +23,11 @@ def _read(name: str) -> str:
         return fh.read()
 
 
+def _read_compose() -> str:
+    with open(os.path.join(REPO, "docker-compose.yml"), encoding="utf-8") as fh:
+        return fh.read()
+
+
 class TestTlsServerBlock:
     def test_tls_listener_on_443(self):
         conf = _read("default.conf")
@@ -63,6 +68,21 @@ class TestAuthForwarding:
     def test_dashboard_bff_location_exists(self):
         conf = _read("default.conf")
         assert "location ^~ /api/dashboard/" in conf
+
+    def test_v2_snippet_included_inside_tls_server_block(self):
+        """The location snippet must be include()d from the 443 server block,
+        never mounted into conf.d/ where nginx would parse it at http level."""
+        conf = _read("default.conf")
+        assert "include /etc/nginx/snippets/provisioning-v2.location.conf;" in conf
+        # include must sit after the 443 listener (i.e. inside that server block)
+        assert conf.index("listen       443 ssl") < conf.index(
+            "include /etc/nginx/snippets/provisioning-v2.location.conf;"
+        )
+
+    def test_compose_mounts_snippet_outside_conf_d(self):
+        compose = _read_compose()
+        assert "/etc/nginx/snippets/provisioning-v2.location.conf" in compose
+        assert "/etc/nginx/conf.d/provisioning-v2.location.conf" not in compose
 
 
 class TestComposeMounts:
