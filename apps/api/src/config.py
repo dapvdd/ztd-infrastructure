@@ -26,6 +26,11 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        # Pin the psycopg2 dialect explicitly: SQLAlchemy 2.1+ prefers the
+        # psycopg3 (psycopg) driver by default for bare `postgresql://` URLs,
+        # but this project pins psycopg2-binary (requirements.txt). Without
+        # the explicit dialect, engine creation fails with
+        # "No module named 'psycopg'" at import time.
+        return f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 settings = Settings()
