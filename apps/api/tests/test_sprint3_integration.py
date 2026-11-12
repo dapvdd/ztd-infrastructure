@@ -135,8 +135,11 @@ def _wifi_base(**extra) -> dict:
         "connection_type": "Wi-Fi",
         "wifi_type": "Personal",
         "wifi_ssid": "TestNet",
-        "wifi_password": "password123",
         "ip_mode": "DHCP",
+        "ztd_device_id": "raspi-test-01",
+        "provisioning_url": "https://100.105.163.126",
+        "monitoring_hub_id": "hs109rs-hub-01",
+        "monitoring_url": "https://192.168.72.245",
         **extra,
     }
 
@@ -175,13 +178,12 @@ class TestScenario01_BootstrapZTDFields:
 
 class TestScenario02_BootstrapShellInjection:
     def test_shell_metacharacters_in_provisioning_url_are_quoted(self):
+        from pydantic import ValidationError
         from src.routes.bootstrap import build_script, BootstrapRequest
-        req = BootstrapRequest(**_wifi_base(
-            provisioning_url="https://host.example.com/$(rm -rf /)",
-        ))
-        script = build_script(req)
-        assert "'https://host.example.com/$(rm -rf /)'" in script
-        assert "PROVISIONING_URL=https://host.example.com/$(rm" not in script
+        with pytest.raises(ValidationError):
+            BootstrapRequest(**_wifi_base(
+                provisioning_url="https://host.example.com/$(rm -rf /)",
+            ))
 
 
 # ============================================================

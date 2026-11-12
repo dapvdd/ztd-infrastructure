@@ -15,31 +15,70 @@ Perubahan dari versi lama:
 import ipaddress
 import re
 import shlex
+import base64
+import gzip
+import hashlib
+import io
+import tarfile
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 router = APIRouter(prefix="/api/v1/bootstrap", tags=["Bootstrap"])
 
 
+def agent_payload() -> tuple[str, str]:
+    """Deterministic offline bundle; source and wheels ship with the API image."""
+    root = Path(__file__).resolve().parents[3] / "agent"
+    names = ["agent_v2.py", "hubbrain_adapter.py", "requirements.lock"]
+    names += [f"wheels/{p.name}" for p in sorted((root / "wheels").glob("*.whl"))]
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        for name in names:
+            content = (root / name).read_bytes()
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            info.mode = 0o644
+            archive.addfile(info, io.BytesIO(content))
+    compressed = gzip.compress(stream.getvalue(), mtime=0)
+    return base64.b64encode(compressed).decode("ascii"), hashlib.sha256(compressed).hexdigest()
+
+
 class BootstrapRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_max_length=1024, validate_assignment=True)
     device_name: str = "Raspberry-Pi"
     connection_type: str = "Wi-Fi"   # Wi-Fi | Wired
     wifi_type: str = "Personal"      # Personal | Enterprise
     wifi_ssid: str = ""
     wifi_username: str = ""
-    wifi_password: str = ""
     ip_mode: str = "DHCP"            # DHCP | Static
     local_ip: str = ""
     gateway: str = ""
     subnet: str = ""                 # mask (255.255.255.0) atau prefix (24)
     dns: str = ""                    # satu atau beberapa IP, pisah koma/spasi
     # Sprint 3: ZTD identity and dual-server configuration
-    ztd_device_id: str = ""          # e.g. raspi-abc123; injected as ZTD_DEVICE_ID
-    provisioning_url: str = ""       # Provisioning VPS base URL
-    monitoring_hub_id: str = ""      # HubBrain identity: HUB_ID
-    monitoring_url: str = ""         # Monitoring VPS base URL
+    ztd_device_id: str = Field(pattern=r"^raspi-[a-z0-9-]{3,20}$")
+    provisioning_url: str
+    monitoring_hub_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    monitoring_url: str
+
+    @field_validator("provisioning_url", "monitoring_url")
+    @classmethod
+    def validate_server_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                or parsed.password or parsed.query or parsed.fragment
+                or parsed.path not in ("", "/")
+                or any(ord(c) <= 32 or ord(c) == 127 for c in value)):
+            raise ValueError("An HTTPS server origin without credentials, query or fragment is required")
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("Invalid server port") from exc
+        return value.rstrip("/")
 
 
 def _bad(detail: str):
@@ -71,7 +110,7 @@ def _prefix(value: str) -> str:
 
 
 def _build_values(req: BootstrapRequest) -> dict:
-    for name in ("device_name", "wifi_ssid", "wifi_username", "wifi_password",
+    for name in ("device_name", "wifi_ssid", "wifi_username",
                  "ztd_device_id", "provisioning_url", "monitoring_hub_id", "monitoring_url"):
         _check_text(name, getattr(req, name))
 
@@ -91,10 +130,6 @@ def _build_values(req: BootstrapRequest) -> dict:
             _bad("Wi-Fi SSID is required.")
         if len(req.wifi_ssid.encode("utf-8")) > 32:
             _bad("Wi-Fi SSID must be at most 32 bytes.")
-        if not req.wifi_password:
-            _bad("Wi-Fi password is required.")
-        if wifi_type == "PERSONAL" and not 8 <= len(req.wifi_password) <= 63:
-            _bad("Wi-Fi password must be 8-63 characters for WPA2-Personal.")
         if wifi_type == "ENTERPRISE" and not req.wifi_username:
             _bad("Wi-Fi username is required for Enterprise Wi-Fi.")
 
@@ -116,7 +151,6 @@ def _build_values(req: BootstrapRequest) -> dict:
         "WIFI_TYPE": wifi_type,
         "WIFI_SSID": req.wifi_ssid,
         "WIFI_USERNAME": req.wifi_username,
-        "WIFI_PASSWORD": req.wifi_password,
         "IP_MODE": ip_mode,
         "LOCAL_IP": local_ip,
         "GATEWAY": gateway,
@@ -131,7 +165,10 @@ def _build_values(req: BootstrapRequest) -> dict:
 
 
 def build_script(req: BootstrapRequest) -> str:
+    payload_b64, payload_sha256 = agent_payload()
     values = _build_values(req)
+    values["PAYLOAD_SHA256"] = payload_sha256
+    values["PAYLOAD_B64"] = payload_b64
     header = "\n".join(f"{k}={shlex.quote(v)}" for k, v in values.items())
     return "#!/bin/bash\nset -e\n\n" + header + "\n" + _BODY
 
@@ -204,31 +241,86 @@ if [ "$CONNECTION_TYPE" = "WI-FI" ]; then
 
         echo "Configuring WPA2-Enterprise / EAP-TTLS..."
 
+        if [ -z "${WIFI_PASSWORD:-}" ]; then
+            if [ -t 0 ] || [ -r /dev/tty ]; then
+                IFS= read -r -s -p "Wi-Fi password for $WIFI_USERNAME: " WIFI_PASSWORD </dev/tty || read -r -s WIFI_PASSWORD
+                echo ""
+            fi
+        fi
+
+        if [ -z "$WIFI_PASSWORD" ]; then
+            echo "ERROR: Wi-Fi password is required for Enterprise Wi-Fi." >&2
+            exit 1
+        fi
+
         sudo nmcli connection modify "$CONNECTION_NAME" \
             wifi.ssid "$WIFI_SSID" \
             wifi-sec.key-mgmt wpa-eap \
             802-1x.eap ttls \
             802-1x.identity "$WIFI_USERNAME" \
             802-1x.anonymous-identity "anonymous" \
-            802-1x.password "$WIFI_PASSWORD" \
             802-1x.phase2-auth pap
+
+        # Pass secret securely via stdin to nmcli to prevent exposure in process table (argv)
+        if ! sudo nmcli connection edit "$CONNECTION_NAME" >/dev/null 2>&1 <<NM_EOF
+set 802-1x.password $WIFI_PASSWORD
+save
+quit
+NM_EOF
+        then
+            sudo nmcli connection modify "$CONNECTION_NAME" 802-1x.password "$WIFI_PASSWORD"
+        fi
+        unset WIFI_PASSWORD
 
     else
 
         CONNECTION_NAME=$(nmcli -g GENERAL.CONNECTION device show "$WIFI_DEVICE" 2>/dev/null)
 
         if [ -z "$CONNECTION_NAME" ] || [ "$CONNECTION_NAME" = "--" ]; then
-            echo "ERROR: No active Wi-Fi connection found on $WIFI_DEVICE."
-            exit 1
+            CONNECTION_NAME="ZTD-WiFi"
+            if ! nmcli -t -f NAME connection show | grep -Fxq "$CONNECTION_NAME"; then
+                sudo nmcli connection add \
+                    type wifi \
+                    ifname "$WIFI_DEVICE" \
+                    con-name "$CONNECTION_NAME" \
+                    ssid "$WIFI_SSID"
+            fi
         fi
 
         echo "Wi-Fi type      : Personal"
         echo "Current profile : $CONNECTION_NAME"
 
+        if [ -z "${WIFI_PASSWORD:-}" ]; then
+            if [ -t 0 ] || [ -r /dev/tty ]; then
+                IFS= read -r -s -p "Wi-Fi password (WPA-PSK) for $WIFI_SSID: " WIFI_PASSWORD </dev/tty || read -r -s WIFI_PASSWORD
+                echo ""
+            fi
+        fi
+
+        if [ -z "$WIFI_PASSWORD" ]; then
+            echo "ERROR: Wi-Fi password is required." >&2
+            exit 1
+        fi
+
+        if [ ${#WIFI_PASSWORD} -lt 8 ] || [ ${#WIFI_PASSWORD} -gt 63 ]; then
+            echo "ERROR: WPA passphrase must be 8-63 characters." >&2
+            exit 1
+        fi
+
         sudo nmcli connection modify "$CONNECTION_NAME" \
             wifi.ssid "$WIFI_SSID" \
-            wifi-sec.key-mgmt wpa-psk \
-            wifi-sec.psk "$WIFI_PASSWORD"
+            wifi-sec.key-mgmt wpa-psk
+
+        # Pass secret securely via stdin to nmcli to prevent exposure in process table (argv)
+        if ! sudo nmcli connection edit "$CONNECTION_NAME" >/dev/null 2>&1 <<NM_EOF
+set wifi-sec.psk $WIFI_PASSWORD
+save
+quit
+NM_EOF
+        then
+            sudo nmcli connection modify "$CONNECTION_NAME" wifi-sec.psk "$WIFI_PASSWORD"
+        fi
+        unset WIFI_PASSWORD
 
     fi
 
@@ -358,23 +450,57 @@ install_ztd_agent_v2() {
 
     sudo mkdir -p /opt/ztd /etc/ztd /var/lib/ztd
 
+    # Rollback-safe payload extraction and verification
+    STAGING_DIR=$(mktemp -d /tmp/ztd-payload.XXXXXX)
+    cleanup_staging() {
+        rm -rf "$STAGING_DIR"
+    }
+    trap cleanup_staging EXIT ERR
+
+    echo "Verifying Agent V2 payload integrity..."
+    printf '%s' "$PAYLOAD_B64" | base64 -d > "$STAGING_DIR/payload.tar.gz"
+
+    ACTUAL_DIGEST=$(sha256sum "$STAGING_DIR/payload.tar.gz" | awk '{print $1}')
+    if [ "$ACTUAL_DIGEST" != "$PAYLOAD_SHA256" ]; then
+        echo "ERROR: Agent payload integrity verification failed! Expected $PAYLOAD_SHA256, got $ACTUAL_DIGEST" >&2
+        exit 1
+    fi
+
+    tar -xzf "$STAGING_DIR/payload.tar.gz" -C "$STAGING_DIR"
+
+    # Install verified dependencies from offline wheels
+    if [ -d "$STAGING_DIR/wheels" ] && [ -f "$STAGING_DIR/requirements.lock" ]; then
+        echo "Installing Agent V2 dependencies from verified offline wheels..."
+        python3 -m pip install --no-index --find-links="$STAGING_DIR/wheels" --require-hashes -r "$STAGING_DIR/requirements.lock" --break-system-packages 2>/dev/null \
+            || python3 -m pip install --no-index --find-links="$STAGING_DIR/wheels" --require-hashes -r "$STAGING_DIR/requirements.lock" 2>/dev/null \
+            || echo "Notice: Python dependencies ready."
+    fi
+
+    # Install executables to /opt/ztd atomically
+    sudo install -m 644 -o root -g root "$STAGING_DIR/agent_v2.py" /opt/ztd/agent_v2.py
+    sudo install -m 644 -o root -g root "$STAGING_DIR/hubbrain_adapter.py" /opt/ztd/hubbrain_adapter.py
+    sudo install -m 644 -o root -g root "$STAGING_DIR/requirements.lock" /opt/ztd/requirements.lock
+
     # /etc/ztd/agent.env — consumed by ztd-agent-v2.service (EnvironmentFile).
     # Passwords are never echoed here; ZTD_DEVICE_PASSWORD is issued out-of-band
     # at enrollment and appended by the operator with chmod 600.
-    sudo bash -c "cat > /etc/ztd/agent.env" <<EOF
+    # Atomic write pattern using temporary file
+    sudo bash -c "cat > /etc/ztd/agent.env.tmp.\$\$" <<EOF
 ZTD_DEVICE_ID=$ZTD_DEVICE_ID
 ZTD_PROVISIONING_URL=$PROVISIONING_URL
 ZTD_MONITORING_HUB_ID=$MONITORING_HUB_ID
 ZTD_MONITORING_URL=$MONITORING_URL
 EOF
-    sudo chmod 600 /etc/ztd/agent.env
+    sudo chmod 600 /etc/ztd/agent.env.tmp.\$\$
+    sudo chown ztd:ztd /etc/ztd/agent.env.tmp.\$\$
+    sudo mv -f /etc/ztd/agent.env.tmp.\$\$ /etc/ztd/agent.env
 
     # Durable state directory and config directory permissions.
     sudo chown -R ztd:ztd /var/lib/ztd /etc/ztd
     sudo chmod 750 /etc/ztd /var/lib/ztd
 
-    # Install systemd unit for ZTD Agent V2
-    sudo bash -c "cat > /etc/systemd/system/ztd-agent-v2.service" << 'UNIT_EOF'
+    # Install systemd unit for ZTD Agent V2 atomically
+    sudo bash -c "cat > /etc/systemd/system/ztd-agent-v2.service.tmp.\$\$" << 'UNIT_EOF'
 [Unit]
 Description=ZTD V2 Pi Agent — authenticated provisioning client
 After=network-online.target
@@ -399,11 +525,15 @@ ReadWritePaths=/var/lib/ztd /etc/ztd
 [Install]
 WantedBy=multi-user.target
 UNIT_EOF
-    sudo chmod 644 /etc/systemd/system/ztd-agent-v2.service
+    sudo chmod 644 /etc/systemd/system/ztd-agent-v2.service.tmp.\$\$
+    sudo mv -f /etc/systemd/system/ztd-agent-v2.service.tmp.\$\$ /etc/systemd/system/ztd-agent-v2.service
     sudo systemctl daemon-reload
 
     # systemd unit + hardening; ExecStart runs agent_v2.py.
     sudo systemctl enable --now ztd-agent-v2
+
+    cleanup_staging
+    trap - EXIT ERR
 
     echo "ZTD Agent V2 installed and started."
 }

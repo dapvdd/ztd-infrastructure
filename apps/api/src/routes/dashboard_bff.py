@@ -30,14 +30,56 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
+
+from src.routes.bootstrap import BootstrapRequest, build_script
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard BFF"])
 
 COOKIE_NAME = "ztd_session"
 SESSION_TTL_SECONDS = 8 * 3600
 MIN_SECRET_LEN = 32
+
+_rate_limit_history: dict[str, list[float]] = {}
+RATE_LIMIT_WINDOW = 60.0
+RATE_LIMIT_MAX_REQUESTS = 10
+
+
+def _check_rate_limit(key: str) -> None:
+    now = time.time()
+    history = _rate_limit_history.setdefault(key, [])
+    # Prune old entries
+    cutoff = now - RATE_LIMIT_WINDOW
+    _rate_limit_history[key] = [t for t in history if t > cutoff]
+    if len(_rate_limit_history[key]) >= RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(429, "Too many requests; please wait before retrying")
+    _rate_limit_history[key].append(now)
+
+
+def _check_csrf(request: Request) -> None:
+    sec_fetch_site = request.headers.get("sec-fetch-site")
+    if sec_fetch_site and sec_fetch_site.strip().lower() == "cross-site":
+        raise HTTPException(403, "Cross-site request forbidden")
+    origin = request.headers.get("origin")
+    host = request.headers.get("host")
+    if origin and host:
+        from urllib.parse import urlsplit
+        parsed_origin = urlsplit(origin)
+        origin_host = parsed_origin.netloc or parsed_origin.path
+        # Normalize by removing default port if matches
+        if origin_host.lower() != host.lower():
+            raise HTTPException(403, "Cross-origin request forbidden")
+
+
+def _check_payload_size(request: Request, max_bytes: int = 16384) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(413, "Request payload too large")
+        except ValueError:
+            raise HTTPException(400, "Invalid Content-Length header")
 
 
 class LoginInput(BaseModel):
@@ -268,3 +310,45 @@ def proxy(path: str, request: Request) -> Response:
         {"Authorization": f"Bearer {_admin_token()}"},
     )
     return JSONResponse(status_code=status, content=body)
+
+
+# ---------------------------------------------------------------------------
+# Authenticated bootstrap generation (F-01, Task 2)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/bootstrap/raspberry", response_class=PlainTextResponse)
+async def generate_raspberry_bootstrap(request: Request) -> Response:
+    user = _current_user(request)
+    _check_csrf(request)
+    _check_payload_size(request)
+    _check_rate_limit(user)
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON payload")
+
+    from pydantic import ValidationError
+    try:
+        req = BootstrapRequest.model_validate(data)
+    except ValidationError as err:
+        # Sanitize error detail: never echo submitted input values (which may contain secrets)
+        clean_errors = [
+            {"type": e.get("type"), "loc": e.get("loc"), "msg": e.get("msg")}
+            for e in err.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": clean_errors})
+
+    script = build_script(req)
+    return PlainTextResponse(
+        content=script,
+        media_type="text/x-shellscript; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="bootstrap-raspberry.sh"',
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+

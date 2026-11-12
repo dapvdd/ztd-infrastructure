@@ -67,7 +67,6 @@ def test_scenario_01_fresh_bootstrap():
         connection_type="Wi-Fi",
         wifi_type="Personal",
         wifi_ssid="FleetAP",
-        wifi_password="SecurePassword123",
         ip_mode="DHCP",
         ztd_device_id="raspi-fresh-01",
         provisioning_url="https://100.105.163.126",
@@ -82,7 +81,7 @@ def test_scenario_01_fresh_bootstrap():
     assert "systemctl enable --now ztd-agent-v2" in script
     # Verify no raw unquoted variables
     assert "FleetAP" in script
-    assert "SecurePassword123" in script
+    assert "SecurePassword123" not in script
 
 
 # ===========================================================================
@@ -96,6 +95,8 @@ def test_scenario_02_bootstrap_rerun_idempotency():
         ip_mode="DHCP",
         ztd_device_id="raspi-fresh-01",
         provisioning_url="https://100.105.163.126",
+        monitoring_hub_id="hs109rs-hub-01",
+        monitoring_url="https://192.168.72.245",
     )
     script = build_script(req)
     # Check idempotent guards
