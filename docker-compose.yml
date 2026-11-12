@@ -79,6 +79,10 @@ services:
     volumes:
       - ./apps/api/src:/app/src
       - ./apps/agent:/app/agent:ro
+      # Dashboard BFF validates login against the same htpasswd nginx uses.
+      # Mounted read-only; path is handed to the backend via
+      # ZTD_DASHBOARD_HTPASSWD (operator .env, see README-mqtt-auth/ops docs).
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
     networks:
       - ztd-network
     depends_on:
