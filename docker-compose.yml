@@ -92,6 +92,11 @@ services:
     expose:
       - "1883"
       - "9001"
+    # Credentials for the authenticated healthcheck; injected from the
+    # operator's .env (never committed). Healthcheck passes -u/-P from these.
+    environment:
+      MQTT_HEALTH_USER: ${MQTT_HEALTH_USER}
+      MQTT_HEALTH_PASS: ${MQTT_HEALTH_PASS}
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       # Operator-generated (never committed): docker … mosquitto_passwd -c …
