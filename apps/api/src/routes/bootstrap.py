@@ -348,6 +348,14 @@ install_ztd_agent_v2() {
     echo ""
     echo "[5/5] Installing ZTD Agent V2..."
 
+    # Ensure system group and user exist before chown
+    if ! getent group ztd >/dev/null 2>&1; then
+        sudo groupadd -r ztd
+    fi
+    if ! getent passwd ztd >/dev/null 2>&1; then
+        sudo useradd -r -g ztd -d /var/lib/ztd -s /usr/sbin/nologin -c "ZTD Agent Daemon" ztd
+    fi
+
     sudo mkdir -p /opt/ztd /etc/ztd /var/lib/ztd
 
     # /etc/ztd/agent.env — consumed by ztd-agent-v2.service (EnvironmentFile).
@@ -361,8 +369,38 @@ ZTD_MONITORING_URL=$MONITORING_URL
 EOF
     sudo chmod 600 /etc/ztd/agent.env
 
-    # Durable state directory owned by the agent user.
+    # Durable state directory and config directory permissions.
     sudo chown -R ztd:ztd /var/lib/ztd /etc/ztd
+    sudo chmod 750 /etc/ztd /var/lib/ztd
+
+    # Install systemd unit for ZTD Agent V2
+    sudo bash -c "cat > /etc/systemd/system/ztd-agent-v2.service" << 'UNIT_EOF'
+[Unit]
+Description=ZTD V2 Pi Agent — authenticated provisioning client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ztd
+Group=ztd
+EnvironmentFile=/etc/ztd/agent.env
+ExecStart=/usr/bin/python3 /opt/ztd/agent_v2.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ztd /etc/ztd
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+    sudo chmod 644 /etc/systemd/system/ztd-agent-v2.service
+    sudo systemctl daemon-reload
 
     # systemd unit + hardening; ExecStart runs agent_v2.py.
     sudo systemctl enable --now ztd-agent-v2

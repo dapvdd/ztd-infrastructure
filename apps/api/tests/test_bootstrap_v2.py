@@ -1,9 +1,17 @@
 """Tests for Sprint 3 bootstrap extension: ZTD identity and dual-server config fields."""
 
+import os
 import shutil
 import subprocess
+import sys
 
 import pytest
+
+# Ensure apps/api is on sys.path so 'src' imports work from any CWD
+_API_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _API_DIR not in sys.path:
+    sys.path.insert(0, _API_DIR)
+
 from fastapi.testclient import TestClient
 from src.main import app
 from src.routes.bootstrap import build_script, BootstrapRequest
@@ -138,6 +146,25 @@ class TestBootstrapInstallsAgentV2:
     def test_script_enables_systemd_unit(self):
         script = self._script(ztd_device_id="raspi-edge-01")
         assert "systemctl enable --now ztd-agent-v2" in script
+
+    def test_script_provisions_ztd_user_and_group(self):
+        """Must ensure system user 'ztd' and group 'ztd' exist on fresh Pi before chown."""
+        script = self._script(
+            ztd_device_id="raspi-edge-01",
+            provisioning_url="https://100.105.163.126",
+        )
+        assert "groupadd -r ztd" in script
+        assert "useradd -r -g ztd" in script
+
+    def test_script_installs_systemd_unit_file(self):
+        """Must write /etc/systemd/system/ztd-agent-v2.service and reload daemon."""
+        script = self._script(
+            ztd_device_id="raspi-edge-01",
+            provisioning_url="https://100.105.163.126",
+        )
+        assert "/etc/systemd/system/ztd-agent-v2.service" in script
+        assert "systemctl daemon-reload" in script
+        assert "ExecStart=/usr/bin/python3 /opt/ztd/agent_v2.py" in script
 
     def test_agent_block_guarded_by_device_id(self):
         script = self._script()
