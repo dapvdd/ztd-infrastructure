@@ -309,9 +309,10 @@ def _provisioning_request(
         from fastapi.testclient import TestClient
 
         from src.main import app as _app
-    except RuntimeError:
-        # starlette raises RuntimeError when httpx (test-only dep) is absent,
-        # i.e. the deployed runtime container. Fall through to loopback HTTP.
+    except (ImportError, RuntimeError):
+        # The runtime image's fastapi/testclient shim raises ImportError at
+        # import time; test installs without httpx raise RuntimeError. Both
+        # mean "no in-process path" -> fall through to loopback HTTP.
         pass
     else:
         with TestClient(_app, raise_server_exceptions=False) as client:
