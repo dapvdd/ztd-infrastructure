@@ -7,12 +7,14 @@ Original dashboard checkout with 48 modified files at
 
 ## Phase checklist
 - [x] P1 code: vite changeOrigin removed (dashboard c584f05); CSRF intact
-- [ ] P1 evidence: Chromium E2E — 200 download, cross-site 403, unauth 401, Agent V2 content, no secrets
+- [x] P1 evidence: Chromium E2E vs staging nginx 8443 — 14 PASS / 0 FAIL
+      (see "P1 Chromium E2E" below); frontend API sends snake_case already
 - [x] P2 code: argv-leak paths removed (infra 39c83e8) — keyfile-load mechanism,
       psk-flags fallback, pip abort-before-service; suite 233/3
 - [ ] P2 evidence: bash -n on Linux staging + full installer acceptance there
 - [x] P5 MQTT hardening verified end-to-end in staging (infra b8f335d) — see
       evidence log "P5 MQTT" below
+- [x] P4 nginx + BFF runtime validation (staging) — see "P4 runtime" below
 - [ ] P6 DB migration rehearsal
 - [ ] P7 rollback rehearsal
 - [ ] P8 final acceptance + verdict
@@ -83,3 +85,64 @@ End-to-end through the real backend listener (staging DB ztd_stage):
 Test-idempotency note: v3.1.1 publishes that violate the ACL are dropped
 silently with PUBACK rc=0 — ACL denial visibility requires MQTT v5 or
 QoS1-with-log inspection (documented in README §6).
+
+### P4 runtime (staging, 2026-11-12/13)
+Static gate (p4_results.txt): nginx -t OK; :8080→301 https; :8443→200
+TLSv1.3 self-signed CN=ztd-staging.local; /api/v2/provisioning unauth→401;
+/api/v1/bootstrap unauth→401.
+
+Defects found live, fixed and re-verified through the real BFF flow:
+1. `b2e6b3a` compose: htpasswd never mounted into backend → POST
+   /api/dashboard/session 503 "authentication service not configured".
+2. `c61543e` deps: itsdangerous missing in runtime image (lazily imported
+   in _signer) → login 500 ModuleNotFoundError. requirements.txt + import-
+   coverage regression test (test_bff_dependencies.py). VPS has no PyPI
+   access (connection reset) — wheel 2.2.0 downloaded locally, scp'd,
+   docker cp + pip install inside ztd-stage-backend.
+3. `ef7e8dc` nginx: /api/dashboard/ proxied Host as $host (portless) →
+   same-origin check saw Host 127.0.0.1 vs Origin …:8443 → 403 on every
+   same-origin POST. Now $http_host for the BFF location only.
+4. `e7e3f8d` bootstrap: agent_payload() hard-coded parents[3]/agent →
+   FileNotFoundError /agent/agent_v2.py in container (mount is /app/agent).
+   New _agent_root(): ZTD_AGENT_DIR env override + layout probing; .env
+   gained ZTD_AGENT_DIR=/app/agent.
+5. `d7806f4` bff: provisioning proxy used fastapi.testclient (httpx is a
+   test-only dep) → 500 in runtime. Dual path: TestClient in tests,
+   stdlib urllib loopback (ZTD_INTERNAL_API_URL, default 127.0.0.1:8000)
+   at runtime; URLError → clean 502.
+6. `29fc662` bff: proxy dropped the request body → enrollment POST 422
+   (Enrollment.device_id missing). Body + Content-Type now forwarded.
+7. `a401f53` bff: blocking urllib inline in async proxy deadlocked the
+   event loop (loopback shares the same process) → hang/500. Now
+   run_in_threadpool.
+8. `53f6e67` bff: runtime image raises ImportError (not RuntimeError) on
+   the testclient probe → fallback never engaged. Both caught.
+
+Final BFF flow evidence (p4k/p4l_results.txt, all through nginx :8443):
+login 200 {authenticated:true,username:staging}; GET /session 200;
+POST /bootstrap/raspberry 200 text/x-shellscript 761965 B with markers
+install_ztd_agent_v2 ×2, ztd-agent-v2.service ×4, PAYLOAD_B64+SHA256,
+zero legacy secrets.h, zero Wi-Fi PSK, zero admin-token echo; evil
+Origin with valid session → 403; no session → 401; wrong password →
+401; logout 204 then 401; GET /api/dashboard/v2/provisioning/devices
+via BFF → 200 []; /health {status:healthy,database:connected}.
+
+### P1 Chromium E2E (Playwright 1.64.1 headless vs staging nginx, 2026-11-13)
+14 PASS / 0 FAIL (p1_results.txt + screenshots 01–03):
+- SPA loads; session gate shows login form; wrong password → explicit
+  "Username atau password dashboard salah."; correct login → badge
+  "Sesi: staging".
+- Enrollment via UI (window.confirm auto-accepted): unique raspi-e2e-*
+  → one-time password displayed once (len 43).
+- Bootstrap form (Wired): Device Name/Pi Host/Pi Username/Room/MQTT
+  broker + ZTD Device ID raspi-e2e-check → download event
+  bootstrap-e2e-check.sh 761969 B; content asserts: install_ztd_agent_v2,
+  ztd-agent-v2.service, PAYLOAD_B64+PAYLOAD_SHA256, no secrets.h, hub
+  disposition embedded; sha256 head ea22904cb97efc07.
+- Logout → login form returns; unauth POST download via API → 401.
+- Backend log greps: 0× "500 Internal" in the E2E window.
+Dashboard unit suite after E2E fixes: 174/174 pass; vite build OK.
+Known residual (documented, not a blocker for staging): POST
+/api/dashboard/session does not run _check_csrf (login-with-evil-origin
+returns 200 when password is valid). Login-CSRF hardening is queued as
+follow-up; session-boundary and download CSRF checks verified working.
