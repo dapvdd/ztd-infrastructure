@@ -33,8 +33,8 @@ def test_bff_imports_are_covered():
     declared = {"fastapi", "uvicorn", "pydantic_settings", "psycopg2", "sqlalchemy",
                 "paramiko", "paho", "itsdangerous", "pydantic"}
     # stdlib modules used by dashboard_bff
-    stdlib = {"__future__", "base64", "hashlib", "hmac", "os", "secrets", "time",
-              "typing", "urllib"}
+    stdlib = {"__future__", "base64", "hashlib", "hmac", "json", "os", "secrets",
+              "time", "typing", "urllib"}
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

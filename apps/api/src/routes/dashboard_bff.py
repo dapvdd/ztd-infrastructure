@@ -280,24 +280,60 @@ def logout(response: Response) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _provisioning_request(path: str, headers: dict[str, str]) -> tuple[int, Any]:
+def _provisioning_request(path: str, headers: dict[str, str], method: str = "GET") -> tuple[int, Any]:
     """Forward a request to the provisioning API with the admin bearer injected.
 
-    In-process implementation: builds a short-lived TestClient against this
-    same app under the real /api/v2/provisioning prefix. No external network
-    call, no token echo in responses.
+    Primary path (tests): in-process ASGI via starlette TestClient -- no
+    network, no dependency on a running server.
+    Runtime fallback (deployed container): stdlib urllib against the
+    container-loopback API, because starlette refuses to import testclient
+    without the test-only httpx dependency (staging P4 caught the 500).
+    The admin bearer is injected by this function in both paths and never
+    echoed to the client.
     """
-    from fastapi.testclient import TestClient
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
 
-    from src.main import app as _app
-
-    with TestClient(_app, raise_server_exceptions=False) as client:
-        resp = client.get(f"/api/v2/provisioning/{path}", headers=headers)
+    # 1) In-process path (test environment): starlette TestClient against this
+    #    same app under the real /api/v2/provisioning prefix. No network.
     try:
-        body = resp.json()
+        from fastapi.testclient import TestClient
+
+        from src.main import app as _app
+    except RuntimeError:
+        # starlette raises RuntimeError when httpx (test-only dep) is absent,
+        # i.e. the deployed runtime container. Fall through to loopback HTTP.
+        pass
+    else:
+        with TestClient(_app, raise_server_exceptions=False) as client:
+            resp = client.request(method, f"/api/v2/provisioning/{path}", headers=headers)
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {"detail": resp.text}
+        return resp.status_code, body
+
+    # 2) Runtime path: stdlib urllib against the container-loopback API.
+    base = os.environ.get("ZTD_INTERNAL_API_URL", "http://127.0.0.1:8000").rstrip("/")
+    url = f"{base}/api/v2/provisioning/{path}"
+    req = Request(url, headers=headers, method=method)
+    try:
+        with urlopen(req, timeout=15) as resp:
+            status = resp.status
+            raw = resp.read()
+    except HTTPError as exc:
+        status = exc.code
+        raw = exc.read()
+    except URLError as exc:
+        # Loopback unreachable: surface a clean 502, never a bare 500.
+        return 502, {"detail": f"Provisioning upstream unreachable: {exc.reason}"}
+    try:
+        import json as _json
+
+        body = _json.loads(raw.decode("utf-8", "replace"))
     except ValueError:
-        body = {"detail": resp.text}
-    return resp.status_code, body
+        body = {"detail": raw.decode("utf-8", "replace")[:500]}
+    return status, body
 
 
 @router.api_route(
@@ -308,6 +344,7 @@ def proxy(path: str, request: Request) -> Response:
     status, body = _provisioning_request(
         path,
         {"Authorization": f"Bearer {_admin_token()}"},
+        method=request.method,
     )
     return JSONResponse(status_code=status, content=body)
 
