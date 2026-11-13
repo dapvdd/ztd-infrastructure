@@ -31,7 +31,7 @@ def test_bff_imports_are_covered():
         reqs = fh.read()
 
     declared = {"fastapi", "uvicorn", "pydantic_settings", "psycopg2", "sqlalchemy",
-                "paramiko", "paho", "itsdangerous", "pydantic"}
+                "paramiko", "paho", "itsdangerous", "pydantic", "starlette"}
     # stdlib modules used by dashboard_bff
     stdlib = {"__future__", "base64", "hashlib", "hmac", "json", "os", "secrets",
               "time", "typing", "urllib"}

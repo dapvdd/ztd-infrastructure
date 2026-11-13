@@ -31,6 +31,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from src.routes.bootstrap import BootstrapRequest, build_script
@@ -359,11 +360,15 @@ async def proxy(path: str, request: Request) -> Response:
     content_type = request.headers.get("content-type")
     if content_type:
         forward_headers["Content-Type"] = content_type
-    status, body = _provisioning_request(
+    # _provisioning_request blocks (urllib); run_in_threadpool keeps the event
+    # loop free -- calling it inline deadlocked the loopback API, which shares
+    # this same process/event loop (staging E2E caught the 500).
+    status, body = await run_in_threadpool(
+        _provisioning_request,
         path,
         forward_headers,
-        method=request.method,
-        body=raw_body if raw_body else None,
+        request.method,
+        raw_body if raw_body else None,
     )
     return JSONResponse(status_code=status, content=body)
 
