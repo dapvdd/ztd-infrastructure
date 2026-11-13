@@ -280,7 +280,9 @@ def logout(response: Response) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _provisioning_request(path: str, headers: dict[str, str], method: str = "GET") -> tuple[int, Any]:
+def _provisioning_request(
+    path: str, headers: dict[str, str], method: str = "GET", body: bytes | None = None
+) -> tuple[int, Any]:
     """Forward a request to the provisioning API with the admin bearer injected.
 
     Primary path (tests): in-process ASGI via starlette TestClient -- no
@@ -289,10 +291,16 @@ def _provisioning_request(path: str, headers: dict[str, str], method: str = "GET
     container-loopback API, because starlette refuses to import testclient
     without the test-only httpx dependency (staging P4 caught the 500).
     The admin bearer is injected by this function in both paths and never
-    echoed to the client.
+    echoed to the client. The caller forwards the original request body
+    (POST /devices enrollment, PUT assignments) and Content-Type.
     """
     from urllib.error import HTTPError, URLError
     from urllib.request import Request, urlopen
+
+    forward_headers = dict(headers)
+    if body:
+        # Content-Type must travel with the body or FastAPI returns 422.
+        forward_headers.setdefault("Content-Type", "application/json")
 
     # 1) In-process path (test environment): starlette TestClient against this
     #    same app under the real /api/v2/provisioning prefix. No network.
@@ -306,17 +314,22 @@ def _provisioning_request(path: str, headers: dict[str, str], method: str = "GET
         pass
     else:
         with TestClient(_app, raise_server_exceptions=False) as client:
-            resp = client.request(method, f"/api/v2/provisioning/{path}", headers=headers)
+            resp = client.request(
+                method,
+                f"/api/v2/provisioning/{path}",
+                headers=forward_headers,
+                content=body if body else None,
+            )
         try:
-            body = resp.json()
+            resp_body = resp.json()
         except ValueError:
-            body = {"detail": resp.text}
-        return resp.status_code, body
+            resp_body = {"detail": resp.text}
+        return resp.status_code, resp_body
 
     # 2) Runtime path: stdlib urllib against the container-loopback API.
     base = os.environ.get("ZTD_INTERNAL_API_URL", "http://127.0.0.1:8000").rstrip("/")
     url = f"{base}/api/v2/provisioning/{path}"
-    req = Request(url, headers=headers, method=method)
+    req = Request(url, data=body if body else None, headers=forward_headers, method=method)
     try:
         with urlopen(req, timeout=15) as resp:
             status = resp.status
@@ -330,21 +343,27 @@ def _provisioning_request(path: str, headers: dict[str, str], method: str = "GET
     try:
         import json as _json
 
-        body = _json.loads(raw.decode("utf-8", "replace"))
+        body_json = _json.loads(raw.decode("utf-8", "replace"))
     except ValueError:
-        body = {"detail": raw.decode("utf-8", "replace")[:500]}
-    return status, body
+        body_json = {"detail": raw.decode("utf-8", "replace")[:500]}
+    return status, body_json
 
 
 @router.api_route(
     "/v2/provisioning/{path:path}", methods=["GET", "POST", "PUT", "DELETE"]
 )
-def proxy(path: str, request: Request) -> Response:
+async def proxy(path: str, request: Request) -> Response:
     _current_user(request)  # 401 without valid session
+    raw_body = await request.body()
+    forward_headers = {"Authorization": f"Bearer {_admin_token()}"}
+    content_type = request.headers.get("content-type")
+    if content_type:
+        forward_headers["Content-Type"] = content_type
     status, body = _provisioning_request(
         path,
-        {"Authorization": f"Bearer {_admin_token()}"},
+        forward_headers,
         method=request.method,
+        body=raw_body if raw_body else None,
     )
     return JSONResponse(status_code=status, content=body)
 

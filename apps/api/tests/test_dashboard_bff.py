@@ -151,7 +151,7 @@ class TestProxyAuth:
 
         import src.routes.dashboard_bff as bff
 
-        def fake_upstream(path, headers, method="GET"):
+        def fake_upstream(path, headers, method="GET", body=None):
             captured["authorization"] = headers.get("Authorization", "")
             captured["method"] = method
             return 200, [{"device_id": "raspi-x", "registration_status": "ENROLLED",
