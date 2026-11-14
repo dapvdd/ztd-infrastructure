@@ -15,7 +15,7 @@ Original dashboard checkout with 48 modified files at
 - [x] P5 MQTT hardening verified end-to-end in staging (infra b8f335d) — see
       evidence log "P5 MQTT" below
 - [x] P4 nginx + BFF runtime validation (staging) — see "P4 runtime" below
-- [ ] P6 DB migration rehearsal
+- [x] P6 DB migration rehearsal — see "P6 migration rehearsal" below
 - [ ] P7 rollback rehearsal
 - [ ] P8 final acceptance + verdict
 
@@ -146,3 +146,48 @@ Known residual (documented, not a blocker for staging): POST
 /api/dashboard/session does not run _check_csrf (login-with-evil-origin
 returns 200 when password is valid). Login-CSRF hardening is queued as
 follow-up; session-boundary and download CSRF checks verified working.
+
+### P6 migration rehearsal (staging, isolated DB ztd_rehearsal, 2026-11-13/14)
+Method: separate database `ztd_rehearsal` inside the staging postgres
+container — staging `ztd_stage` and production untouched. Reconstructed the
+authentic pre-v2 schema from git history (e06d00b's 01-schema.sql minus the
+temp_unit/schema_version columns that arrived with 6b2a6dc), seeded 2 devices
+/ 1 deployment_log / 2 telemetry rows, then applied migrations manually via
+psql (no down migration was run on live data; 003.down exercised only as a
+round-trip on the rehearsal DB).
+
+DB-level results (p6_evidence.txt):
+- 002 applied; telemetry gained temp_unit/schema_version; legacy row digests
+  byte-identical before/after (devices|2|83b052b5…, telemetry|2|dfcd01f3…,
+  deployment_logs|1|43e89749…)
+- 003 applied; 4 provisioning_* tables created empty; digests unchanged
+- Legacy samples keep temp_unit=NULL, schema_version=NULL (never inferred)
+- 002 is idempotent (re-run clean, ADD COLUMN IF NOT EXISTS); 003 is
+  one-shot (re-run fails "relation provisioning_devices already exists" —
+  documented behavior; fresh installs get 003 via init/02 copy, drift-guarded
+  by test_fresh_init_matches_migration_003_exactly)
+- Rollback round-trip 003.down → 003.up: v2 tables dropped then recreated;
+  legacy tables+rows byte-identical throughout (only v2-only data would be
+  lost, matching the down file's own warning)
+
+App-level results (p6_app_ev.txt, p6_enr.txt): second backend container
+(ztd-stage-backend-mig, same image, src mounted ro, MQTT disabled via bogus
+MQTT_HOST) pointed at POSTGRES_DB=ztd_rehearsal →
+- /health → {"status":"healthy","database":"connected"}
+- GET /api/v1/devices → 200 with legacy rows intact (raspi-legacy-01 with
+  cpu_temp 45.1 + modules:["temperature"], raspi-legacy-02, raspi-smoke-mig)
+- v2 enrollment on the migrated DB → 201, one-time password issued,
+  provisioning_devices row present (prov_devices=1), legacy_devices=3,
+  temp_unit NULL preserved (count of non-NULL = 0)
+- second container removed; staging stack verified Up/healthy afterwards
+
+Findings (not blockers, for the report):
+- The physical columns temp_unit/schema_version are currently write-never/
+  read-never at the app layer: device_metrics.py stores unit metadata inside
+  telemetry.payload JSONB (temperature_metadata), models.py has no such
+  columns. Columns exist for forward compatibility; keep 002 as-is.
+- 003.up is not idempotent by design; operators must apply it exactly once
+  (or guard with a to_regclass check at deploy time). Fresh-init path is
+  covered by init/02 + drift guard tests.
+- Local p6 scratch files (p6_legacy_schema.sql, p6_a.txt) live in the infra
+  worktree root, git-ignored; p6_legacy_schema.sql documents the rehearsal.
