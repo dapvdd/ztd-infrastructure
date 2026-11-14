@@ -16,7 +16,7 @@ Original dashboard checkout with 48 modified files at
       evidence log "P5 MQTT" below
 - [x] P4 nginx + BFF runtime validation (staging) — see "P4 runtime" below
 - [x] P6 DB migration rehearsal — see "P6 migration rehearsal" below
-- [ ] P7 rollback rehearsal
+- [x] P7 rollback rehearsal — see "P7 rollback rehearsal" below
 - [ ] P8 final acceptance + verdict
 
 ## Evidence log
@@ -191,3 +191,29 @@ Findings (not blockers, for the report):
   covered by init/02 + drift guard tests.
 - Local p6 scratch files (p6_legacy_schema.sql, p6_a.txt) live in the infra
   worktree root, git-ignored; p6_legacy_schema.sql documents the rehearsal.
+
+### P7 rollback rehearsal (staging, 2026-11-14)
+Three drills, evidence p7a2/p7b/p7c/p7r/p7w_*.txt + runbook
+docs/PRODUCTION-ROLLBACK-RUNBOOK.md (committed):
+
+- **A. Backend image rollback (p7a2):** tagged good image → installed a
+  broken "release" (postgres:16 as ztd-backend:latest) → health [000] →
+  retag + force-recreate → health healthy again; data digest identical;
+  wrong-password login still 401. Two live lessons folded into the runbook:
+  (1) compose service is `ztd-backend`, not `backend` — the first attempt
+  removed the container and proved the recovery path
+  (`compose up -d ztd-backend` + wheel reinstall) works; (2) `--force-recreate`
+  wipes pip installs — itsdangerous wheel must be reinstalled after ANY
+  recreate (verified LOGIN 422-not-500 after reinstall; invalid-wheel-name
+  failure with /tmp/w.whl re-confirms the wheel filename rule).
+- **B. DB backup/restore (p7b):** pg_dump with completion-marker validation
+  (like scripts/backup-db.sh) → simulated data loss (status mutated,
+  provisioning_devices deleted, temp_unit polluted) → drop+create+replay →
+  all three digests identical to baseline; legacy temp_unit NULL preserved.
+- **C. Config rollback (p7c):** broken nginx conf + conflicting container_name
+  → nginx -t failed as expected → restore backup files → nginx -t successful,
+  reload OK, compose config valid, HTTPS :8443 → 200, 4 containers healthy.
+
+Ruling: no down migration was run against any live-data database; the 003
+down/up round-trip stays confined to the P6 rehearsal DB. Rollback strategy
+for production = image/config rollback + pg_dump restore (runbook §4).
