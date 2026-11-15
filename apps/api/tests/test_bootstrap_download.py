@@ -222,9 +222,19 @@ def test_script_passes_bash_syntax_check():
     import subprocess
     req = BootstrapRequest(**valid_request(connection_type="Wi-Fi", wifi_ssid="TestSSID"))
     script = build_script(req)
-    # Ensure git bash is found if on Windows
+    # Ensure git bash is found if on Windows; the WindowsApps bash.EXE is a
+    # WSL stub (exits 1 without parsing) — use normcase for the comparison
+    # because Windows paths are case-insensitive but Python's != is not.
     git_bash = r"C:\Program Files\Git\bin\bash.exe"
-    bash = shutil.which("bash") or (git_bash if os.path.isfile(git_bash) else None)
+    wsl_stub = os.path.normcase(
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\bash.exe")
+    )
+    found = shutil.which("bash")
+    bash = (
+        found
+        if found and os.path.normcase(os.path.abspath(found)) != wsl_stub
+        else (git_bash if os.path.isfile(git_bash) else None)
+    )
     if not bash:
         pytest.skip("bash not available on this environment")
     proc = subprocess.run([bash, "-n"], input=script, capture_output=True, text=True, timeout=30)

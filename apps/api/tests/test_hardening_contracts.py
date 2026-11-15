@@ -3,10 +3,20 @@
 import os
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+# F-13: isolated runs (pytest apps/api/tests/test_hardening_contracts.py from
+# the repo root) have no sys.path entry for apps/api, so `import src...`
+# fails. Other suite files only make it work as a side effect of collection
+# order; make this file self-sufficient.
+_API_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _API_ROOT not in sys.path:
+    sys.path.insert(0, _API_ROOT)
+
 
 
 class TestCredentialEntropyDocs:
@@ -70,12 +80,22 @@ class TestHardenNginxNonInteractive:
         )
 
     def _bash(self):
-        bash = shutil.which("bash")
-        if bash:
-            return bash
-        # Git for Windows ships bash outside PATH.
-        candidate = r"C:\Program Files\Git\bin\bash.exe"
-        return candidate if os.path.isfile(candidate) else None
+        # On Windows, PATH can expose the WSL stub at
+        # %LOCALAPPDATA%\Microsoft\WindowsApps\bash.EXE, which exits 1 with
+        # "no installed distributions" instead of running POSIX scripts.
+        # Prefer a real Git-for-Windows bash; skip WSL stubs (normcase:
+        # Windows paths are case-insensitive).
+        wsl_stub = os.path.normcase(
+            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\bash.exe")
+        )
+        for candidate in (
+            r"C:\Program Files\Git\bin\bash.exe",
+            shutil.which("bash"),
+        ):
+            if candidate and os.path.isfile(candidate) \
+                    and os.path.normcase(os.path.abspath(candidate)) != wsl_stub:
+                return candidate
+        return None
 
     @staticmethod
     def _scratch(tmp_path):

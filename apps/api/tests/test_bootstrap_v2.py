@@ -173,7 +173,19 @@ class TestBootstrapInstallsAgentV2:
             ztd_device_id="raspi-edge-01",
             provisioning_url="https://100.105.163.126",
         )
-        bash = shutil.which("bash")
+        # Prefer real Git-for-Windows bash; the WindowsApps bash.EXE is a WSL
+        # stub that exits 1 ("no installed distributions") without parsing.
+        # normcase because Windows paths are case-insensitive.
+        wsl_stub = os.path.normcase(
+            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\bash.exe")
+        )
+        found = shutil.which("bash")
+        git_bash = r"C:\Program Files\Git\bin\bash.exe"
+        bash = (
+            found
+            if found and os.path.normcase(os.path.abspath(found)) != wsl_stub
+            else (git_bash if os.path.isfile(git_bash) else None)
+        )
         if not bash:
             pytest.skip("bash not available on this platform")
         proc = subprocess.run(
