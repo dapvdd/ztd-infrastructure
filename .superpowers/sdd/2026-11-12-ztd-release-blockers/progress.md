@@ -11,13 +11,15 @@ Original dashboard checkout with 48 modified files at
       (see "P1 Chromium E2E" below); frontend API sends snake_case already
 - [x] P2 code: argv-leak paths removed (infra 39c83e8) — keyfile-load mechanism,
       psk-flags fallback, pip abort-before-service; suite 233/3
-- [ ] P2 evidence: bash -n on Linux staging + full installer acceptance there
+- [~] P2 evidence: bash -n gate on Linux staging DONE (9/9 PASS, P8 gate);
+      full live installer acceptance NOT possible this sprint (no Raspberry Pi
+      hardware available) — recorded as open item, not a code blocker
 - [x] P5 MQTT hardening verified end-to-end in staging (infra b8f335d) — see
       evidence log "P5 MQTT" below
 - [x] P4 nginx + BFF runtime validation (staging) — see "P4 runtime" below
 - [x] P6 DB migration rehearsal — see "P6 migration rehearsal" below
 - [x] P7 rollback rehearsal — see "P7 rollback rehearsal" below
-- [ ] P8 final acceptance + verdict
+- [x] P8 final acceptance + verdict — see "P8 final acceptance" below
 
 ## Evidence log
 
@@ -217,3 +219,34 @@ docs/PRODUCTION-ROLLBACK-RUNBOOK.md (committed):
 Ruling: no down migration was run against any live-data database; the 003
 down/up round-trip stays confined to the P6 rehearsal DB. Rollback strategy
 for production = image/config rollback + pg_dump restore (runbook §4).
+
+### P8 final acceptance (2026-11-14/15)
+Test gates (final runs):
+- infra pytest, BOTH cwds: repo root AND apps/api → 248 passed / 2 skipped
+- dashboard node --test → 174 pass / 0 fail; vite build ✓ (447 ms)
+- bash -n gate on Linux staging (git archive blob, LF): 9/9 PASS
+  (7 scripts + 2 systemd units); deploy-module.py correctly excluded (.py)
+
+P8 fix (commit 8eb4e78): the three "failures" were Windows-environment, not
+code: WindowsApps\bash.EXE is a WSL stub that exits 1 without parsing —
+tests now prefer Git-for-Windows bash with a normcase-compared stub guard;
+F-13 isolated-run sys.path fix added to test_hardening_contracts.py.
+First gate run also produced two real lessons (ledgered in P7): tar from a
+Windows working copy carries CRLF into scripts (use `git archive` — blobs
+verified CR=0), and the gate pattern must exclude *.py.
+
+Gate classification (final report basis):
+- PASS: unit suites (248/2, 174/0), vite build, bash -n on Linux, P4 runtime
+  BFF flow, P1 Chromium E2E 14/0, P5 MQTT matrix, P6 migration rehearsal,
+  P7 rollback drills (image/db/config)
+- PARTIAL: installer acceptance (bash -n only — no Pi hardware this sprint),
+  login-CSRF hardening (residual documented in P1; POST /api/dashboard/session
+  still lacks _check_csrf)
+- Production blockers (unchanged, outside sprint scope): anonymous MQTT open
+  on prod, HTTP-only prod listener, live Tailscale key in prod .env, prod
+  checkout at 6b2a6dc (v2 tables absent there until deploy), backend port
+  exposure rule (internal :8000/:18000 must never be published).
+
+VERDICT: READY_FOR_PRODUCTION_APPROVAL (staging fully validated; deployment
+to production requires operator sign-off on the listed production risks +
+deployment window; no code blocker remains in the sprint scope).
