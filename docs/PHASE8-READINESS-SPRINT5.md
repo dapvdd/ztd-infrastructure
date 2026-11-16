@@ -6,11 +6,11 @@
 
 ---
 
-## Verdict: **GO (staging) — NO-GO (production)**
+## Verdict: **GO (staging rehearsal PASSED) — production deploy still requires approval**
 
-All Sprint 5 implementation and test work is complete and committed. Staging
-rehearsal remains before any production cut-over. The production system
-(`v2-aa8622c` backend, dist `c584f05` dashboard) is **untouched**.
+All Sprint 5 implementation, tests, AND the isolated staging rehearsal are
+complete and committed. Production (`v2-aa8622c` backend, dist `c584f05`)
+remains **untouched**; the rehearsal stack was torn down.
 
 ---
 
@@ -94,22 +94,82 @@ rebuild image, re-run container with original env, run `004_central_auth.down.sq
 
 ---
 
-## Staging Rehearsal Plan (next action)
+## Staging Rehearsal — EXECUTED 2026-11-16 (evidence)
 
-1. Build new image `ztd-backend:sprint5-auth` from branch head with staged wheels.
-2. Spin ephemeral PG container; restore prod-schema dump; apply `004_central_auth.up.sql`.
-3. Run `create-first-admin.py` in the container; verify `200` + `Set-Cookie: ztd_session=...; HttpOnly; SameSite=Strict`.
-4. Browser E2E (Playwright) against isolated HTTPS staging endpoint:
-   - unauthenticated → `/login`
-   - wrong creds → 401 message
-   - correct creds → dashboard, session cookie set
-   - VIEWER account: all restricted buttons hidden; direct API POST → 403
-   - ADMIN account: full access
-   - change-password → other sessions revoked
-5. Re-run `004_central_auth.down.sql` then `.up.sql` (idempotence + reversibility).
-6. Tear down staging containers.
+All steps below were run against **isolated** containers on the VPS; production
+(`ztd-*`) and prior staging (`ztd-stage-*`) stayed untouched and healthy.
 
-**No production deploy is triggered by this sprint.**
+### Environment
+
+| Item | Value |
+|---|---|
+| Image | `ztd-backend:sprint5-auth` (634MB) built from branch head `b2be748` |
+| Argon2 | `argon2==23.1.0` verified in-image: `$argon2id$v=19$m=65536,t=3,p=4` |
+| DB | Ephemeral `postgres:16` (user `ztd_app`, db `ztd_stage`); schema restored from init SQLs; then `004 up` |
+| Backend | `s5-backend` (port 18001), agent dir mounted (bootstrap payload path) |
+| Edge | `s5-nginx` (port 18080) serving the sprint5 `dist/` + proxying `/api/` |
+| Note | DNS egress for api.github.com from a fresh bridge network returned RST once, then self-healed (transient, upstream filtering); `modules` 502 → 200 on retry |
+
+### Smoke results (HTTP, all against the isolated stack)
+
+| Check | Expected | Got |
+|---|---|---|
+| `GET /health` | 200 | **200** |
+| `POST /api/auth/login` wrong pw | 401 | **401** |
+| `POST /api/auth/login` correct | 200 + `Set-Cookie: ztd_session=…; HttpOnly; Max-Age=28800; SameSite=strict` | **200 + cookie** |
+| `GET /api/auth/me` with cookie | 200 `{username, role}` | **200** |
+| `GET /api/auth/me` without cookie | 401 | **401** |
+| `POST /api/auth/logout` | 200; old cookie → 401 after | **200 / 401** |
+| Login rate limit (11th bad login in 300s window) | 429 + `Retry-After: 60` | **429 + retry-after: 60** |
+| Cross-origin POST logout | 403 CSRF | **403** |
+| `POST /api/auth/users` as ADMIN | 201 | **201** |
+| `GET /api/auth/users` as VIEWER | 403 | **403** |
+| `POST /api/v1/devices/x/config` VIEWER | 403 | **403** |
+| `DELETE /api/v1/devices/x` VIEWER | 403 | **403** |
+| `POST /api/v1/bootstrap/raspberry` VIEWER | 403 | **403** |
+| `POST /api/v1/bootstrap/raspberry` ADMIN | 200 (script body) | **200** |
+| `POST /api/v1/bootstrap/raspberry` unauthenticated | 401 | **401** |
+| Last-admin demote | 409 `Operasi 'demote' ditolak` | **409** |
+| `change-password` (self) | 200 `{changed:true, other_sessions_revoked:1}` | **200** |
+| `GET /api/auth/audit-events` | event log incl. LOGIN_OK/LOGIN_FAIL/USER_CREATED | **200** |
+| SPA `/login` and `/` via nginx | 200 | **200** |
+
+### CSRF + nginx note (deployment-critical)
+
+`$host` in nginx **strips the port**; the backend's `_same_origin` compares
+Origin netloc (with port) to Host → false 403 on any non-80/443 port.
+Verified with an echo service: nginx sent `Host: localhost` while Origin was
+`http://localhost:18080`. Fix for any non-standard-port staging/deployment:
+
+```nginx
+proxy_set_header Host $http_host;   # preserves the port
+```
+
+(Production standard ports 80/443 are unaffected; documented for the runbook.)
+
+### Migration round-trip on live data
+
+- `004 down` dropped exactly `app_users`, `app_sessions`, `app_audit_events`;
+  legacy tables (`telemetry`, `devices`, `deployment_logs`, `provisioning_*`)
+  remained intact (verified with `\dt`).
+- `004 up` re-created them; fresh `create-first-admin.py` + login → 200.
+
+### Backend suite inside the sprint5 image (VPS)
+
+`pytest tests/` with the repo mounted at `/app/repo`:
+**272 passed, 0 failed** (plus 3 passed/2 skipped PG-only and 16 acceptance,
+unmounted, matching the local run of 291 total). Argon2 params forced fast via
+env for the test run.
+
+### Frontend build on the VPS
+
+`npm ci && npm test && npm run build` at `942514f`:
+**205 pass / 0 fail**, vite build green (dist assets emitted).
+
+### Teardown
+
+`s5-nginx`, `s5-backend`, `s5-pg`, `s5-echo` removed; `s5net` deleted.
+`docker ps` confirms only pre-existing prod + ztd-stage containers remain.
 
 ---
 
@@ -122,6 +182,14 @@ rebuild image, re-run container with original env, run `004_central_auth.down.sq
   BFF proxy.
 - Argon2 wheels are pinned and staged offline — a new host requires copying
   `/home/firza/deploy-artifacts/*.whl` or internet access at build time.
+- `create-first-admin.py` must run with `-w /app -e PYTHONPATH=/app` inside the
+  container (repo-root CWD), otherwise `from src.auth…` fails.
+- The rehearsal backend image requires the agent dir bind-mount
+  (`-v …/apps/agent:/app/agent:ro`) for bootstrap script generation
+  (`/app/agent/agent_v2.py` payload bundle).
+- Transient DNS/egress RST to api.github.com was observed once on a fresh
+  docker bridge network (self-healed; modules route returns 502 until egress
+  works — same behavior as pre-sprint).
 
 ---
 
@@ -138,6 +206,17 @@ rebuild image, re-run container with original env, run `004_central_auth.down.sq
 - Audit: every auth event recorded with timestamp, actor, IP, action.
 
 ---
+
+### Staging deployment notes (from the executed rehearsal)
+
+- Backend container env (compose or run):
+  `POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB / POSTGRES_HOST=s5-pg / POSTGRES_PORT`
+  (the app reads `POSTGRES_*`, not `DATABASE_URL`).
+- Bind-mount the agent dir: `./apps/agent:/app/agent:ro` (bootstrap payload).
+- Bootstrap admin:
+  `docker exec -i -w /app -e PYTHONPATH=/app ztd-backend python scripts/create-first-admin.py --password-stdin`.
+- nginx proxying to the backend on any non-standard port must use
+  `proxy_set_header Host $http_host;` (see CSRF note above).
 
 ## Phase 6 Cutover Prerequisites (recorded, not executed)
 
