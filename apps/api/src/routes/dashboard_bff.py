@@ -29,11 +29,12 @@ import secrets as _secrets
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from src.database import get_db
 from src.routes.bootstrap import BootstrapRequest, build_script
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard BFF"])
@@ -235,18 +236,139 @@ def _issue_cookie(response: Response, username: str) -> None:
     )
 
 
-def _current_user(request: Request) -> str:
+def _current_user(request: Request, db=None) -> str:
+    """Resolve the dashboard principal from EITHER auth era (Sprint 5).
+
+    1) Central auth session (ztd_session cookie carrying an opaque token that
+       exists in app_sessions) — preferred; role comes from the users DB.
+    2) Legacy itsdangerous cookie (BFF-era session) — still honored until the
+       legacy cutover; role defaults to ADMIN for htpasswd operators (they had
+       full access pre-sprint).
+
+    `db` is the request-scoped session injected by Depends(get_db) so test
+    overrides apply; callers without DI pass None (real SessionLocal used).
+
+    Raises 401 when neither mechanism yields a valid principal.
+    """
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(401, "Dashboard session required")
+
+    # Era 2 FIRST (legacy itsdangerous-signed cookie): pure-CPU check, no DB
+    # I/O. This keeps the pre-sprint request path latency-neutral AND avoids
+    # a multi-second PG connect timeout when central auth is not configured
+    # (e.g. pre-migration containers). Opaque central tokens cannot validate
+    # against the signer, so they fall through to era 1 below.
     try:
         data = _signer().loads(token, max_age=SESSION_TTL_SECONDS)
     except Exception:
-        raise HTTPException(401, "Dashboard session invalid or expired")
-    user = data.get("u")
-    if not user:
+        data = None
+    if data:
+        user = data.get("u")
+        if user:
+            return user
         raise HTTPException(401, "Dashboard session invalid")
-    return user
+
+    # Era 1: central auth (opaque token, server-side state)
+    if db is None:
+        from src.database import get_db as _get_db  # noqa: PLC0415
+
+        db = next(_get_db())
+        close_after = True
+    else:
+        close_after = False
+    try:
+        from src.auth.service import resolve_session  # noqa: PLC0415
+
+        resolved = resolve_session(db, token)
+        if resolved is not None:
+            _sess, user = resolved
+            _principal_role_cache.set(user.username, user.role)
+            return user.username
+    except HTTPException:
+        raise
+    except Exception:
+        # Central auth tables may not exist yet (pre-migration).
+        pass
+    finally:
+        if close_after:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    raise HTTPException(401, "Dashboard session invalid or expired")
+
+
+class _PrincipalRoleCache:
+    """Per-process role cache for the current request principal.
+
+    The BFF needs the ROLE (not just the username) to gate admin-only
+    mutations. The role is always re-derived server-side from the session; the
+    cache only avoids a second DB hit within the same request.
+    """
+
+    def __init__(self) -> None:
+        self._value: tuple[str, str] | None = None
+
+    def set(self, username: str, role: str) -> None:
+        self._value = (username, role)
+
+    def get(self, username: str) -> str | None:
+        if self._value is not None and self._value[0] == username:
+            return self._value[1]
+        return None
+
+
+_principal_role_cache = _PrincipalRoleCache()
+
+
+def _current_role(request: Request, username: str, db=None) -> str:
+    """Role for the current principal; central users DB is authoritative."""
+    cached = _principal_role_cache.get(username)
+    if cached:
+        return cached
+    token = request.cookies.get(COOKIE_NAME)
+    if token and not _is_legacy_token(token):
+        if db is None:
+            from src.database import get_db as _get_db  # noqa: PLC0415
+
+            db = next(_get_db())
+            close_after = True
+        else:
+            close_after = False
+        try:
+            from src.auth.service import resolve_session  # noqa: PLC0415
+
+            resolved = resolve_session(db, token)
+            if resolved is not None:
+                _sess, user = resolved
+                return user.role
+        except Exception:
+            pass
+        finally:
+            if close_after:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+    # Legacy htpasswd operators held full access pre-sprint; keep them at
+    # ADMIN until the central cutover completes (Phase 6).
+    return "ADMIN"
+
+
+def _is_legacy_token(token: str) -> bool:
+    """True when the cookie is an era-2 itsdangerous payload (contains the
+    timestamp separator '.'). Opaque central tokens never contain '.'."""
+    return "." in token
+
+
+def _require_admin(request: Request, db=None) -> str:
+    username = _current_user(request, db)
+    role = _current_role(request, username, db)
+    if role != "ADMIN":
+        raise HTTPException(403, "Forbidden: ADMIN role required")
+    return username
 
 
 # ---------------------------------------------------------------------------
@@ -354,8 +476,17 @@ def _provisioning_request(
 @router.api_route(
     "/v2/provisioning/{path:path}", methods=["GET", "POST", "PUT", "DELETE"]
 )
-async def proxy(path: str, request: Request) -> Response:
-    _current_user(request)  # 401 without valid session
+async def proxy(
+    path: str,
+    request: Request,
+    db = Depends(get_db),
+) -> Response:
+    username = _current_user(request, db)  # 401 without valid session
+    # Sprint 5 RBAC: provisioning enrollment/assignment mutations are
+    # ADMIN-only; a VIEWER session gets 403 before the request reaches the
+    # upstream API (backend is authoritative; frontend hiding is not enough).
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        _require_admin(request, db)
     raw_body = await request.body()
     forward_headers = {"Authorization": f"Bearer {_admin_token()}"}
     content_type = request.headers.get("content-type")
@@ -380,11 +511,14 @@ async def proxy(path: str, request: Request) -> Response:
 
 
 @router.post("/bootstrap/raspberry", response_class=PlainTextResponse)
-async def generate_raspberry_bootstrap(request: Request) -> Response:
-    user = _current_user(request)
+async def generate_raspberry_bootstrap(
+    request: Request,
+    db = Depends(get_db),
+) -> Response:
+    _require_admin(request, db)  # Sprint 5: bootstrap generation is ADMIN-only
     _check_csrf(request)
     _check_payload_size(request)
-    _check_rate_limit(user)
+    _check_rate_limit(_current_user(request, db))
 
     try:
         data = await request.json()

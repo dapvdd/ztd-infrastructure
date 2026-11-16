@@ -24,8 +24,11 @@ import tarfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
+
+from src.auth.dependencies import get_current_admin
+from src.auth.models import AppUser
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 router = APIRouter(prefix="/api/v1/bootstrap", tags=["Bootstrap"])
@@ -201,7 +204,15 @@ def build_script(req: BootstrapRequest) -> str:
 
 
 @router.post("/raspberry", response_class=PlainTextResponse)
-def download_raspberry_bootstrap(req: BootstrapRequest):
+def download_raspberry_bootstrap(
+    req: BootstrapRequest,
+    _admin: AppUser = Depends(get_current_admin),
+):
+    """Bootstrap V1 script generation.
+
+    Sprint 5 RBAC: bootstrap generation/download = ADMIN-only (spec: Viewer
+    gets no bootstrap generation/download). Direct API calls return 403.
+    """
     return PlainTextResponse(
         content=build_script(req),
         headers={

@@ -3,7 +3,10 @@ import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from src.auth.dependencies import get_current_admin, get_current_user
+from src.auth.models import AppUser
 
 router = APIRouter(prefix="/api/v1/modules", tags=["Modules"])
 
@@ -15,8 +18,12 @@ MODULE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$")
 
 
 @router.get("")
-def list_available_modules():
-    """Return module directories available in the public edge-agent repository."""
+def list_available_modules(_viewer: AppUser = Depends(get_current_user)):
+    """Return module directories in the public edge-agent repository.
+
+    Sprint 5 RBAC: any authenticated dashboard session (ADMIN or VIEWER) may
+    read the catalog; mutation paths are governed elsewhere.
+    """
     request = Request(
         MODULES_API_URL,
         headers={

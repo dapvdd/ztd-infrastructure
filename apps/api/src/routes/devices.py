@@ -9,6 +9,8 @@ from src.models import Device, Telemetry, DeploymentLog
 from src.schemas import DeviceResponse, DeviceConfigPayload, DashboardSummary
 from src.config import settings
 from src.provisioning.models import RegisteredDevice
+from src.auth.dependencies import get_current_admin, get_current_user
+from src.auth.models import AppUser
 from src.services.device_metrics import (
     METRICS_KIND,
     build_metrics_response,
@@ -106,10 +108,16 @@ def get_device(device_id: str, db: Session = Depends(get_db)):
     return _serialize_device(device, datetime.now(timezone.utc), db)
 
 @router.post("/{device_id}/config", status_code=status.HTTP_200_OK)
-def set_device_config(device_id: str, payload: DeviceConfigPayload, db: Session = Depends(get_db)):
+def set_device_config(
+    device_id: str,
+    payload: DeviceConfigPayload,
+    db: Session = Depends(get_db),
+    _admin: AppUser = Depends(get_current_admin),
+):
     """
     Kirim Desired State ke Raspi via MQTT Retained.
     Raspi akan membaca konfigurasi ini dan memasang modul yang diminta.
+    Sprint 5 RBAC: ADMIN-only mutation (Viewer gets 403).
     """
     if db.get(RegisteredDevice, device_id) is not None:
         raise HTTPException(status_code=409, detail="Use authenticated provisioning v2 assignments for this device.")
@@ -201,8 +209,12 @@ def get_device_logs(device_id: str, db: Session = Depends(get_db)):
         .all()
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_device(device_id: str, db: Session = Depends(get_db)):
-    """Hapus perangkat dari database."""
+def delete_device(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _admin: AppUser = Depends(get_current_admin),
+):
+    """Hapus perangkat dari database. Sprint 5 RBAC: ADMIN-only."""
     if db.get(RegisteredDevice, device_id) is not None:
         raise HTTPException(status_code=409, detail="Provisioning identities cannot be deleted through legacy inventory.")
     device = db.query(Device).filter(Device.id == device_id).first()

@@ -9,6 +9,7 @@ from src.services.mqtt_listener import start_mqtt_listener, stop_mqtt_listener
 from src.routes.bootstrap import router as bootstrap_router
 from src.provisioning.routes import router as provisioning_router
 from src.routes.dashboard_bff import router as dashboard_bff_router
+from src.auth.routes import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,6 +47,19 @@ app.include_router(modules_router)
 app.include_router(bootstrap_router)
 app.include_router(provisioning_router)
 app.include_router(dashboard_bff_router)
+app.include_router(auth_router)
+
+# Sprint 5: AuthError (401/403/409/429 from the auth service) must render as a
+# clean JSON error, never an unhandled 500.
+from fastapi import Request as _Request  # noqa: E402
+from fastapi.responses import JSONResponse as _JSONResponse  # noqa: E402
+
+from src.auth.service import AuthError as _AuthError  # noqa: E402
+
+
+@app.exception_handler(_AuthError)
+async def _auth_error_handler(_: _Request, exc: _AuthError):
+    return _JSONResponse(status_code=exc.status, content={"detail": str(exc)})
 
 @app.get("/", tags=["General"])
 def root():

@@ -95,18 +95,60 @@ class TestBootstrapV2Fields:
             req.ztd_device_id = "raspi\x00bad"
             build_script(req)
 
-    def test_api_endpoint_accepts_new_fields(self):
-        client = TestClient(app)
-        resp = client.post(
-            "/api/v1/bootstrap/raspberry",
-            json=_wifi_base(
-                ztd_device_id="raspi-api-test",
-                provisioning_url="https://100.105.163.126",
-            ),
+    def test_api_endpoint_accepts_new_fields(self, monkeypatch):
+        # Sprint 5: /api/v1/bootstrap/raspberry is ADMIN-only (RBAC). Provide
+        # an in-memory central-auth DB + an admin session for this test.
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+        from sqlalchemy.pool import StaticPool
+
+        from src.database import get_db
+        from src.auth.models import AppUser, AuthBase
+        from src.auth import service as auth_service
+        from src.auth.service import hash_password
+
+        eng = create_engine(
+            "sqlite://", poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
         )
-        assert resp.status_code == 200
-        assert "ZTD_DEVICE_ID=raspi-api-test" in resp.text
-        assert "PROVISIONING_URL=https://100.105.163.126" in resp.text
+        AuthBase.metadata.create_all(eng)
+
+        def sessions():
+            with Session(eng) as s:
+                yield s
+
+        app.dependency_overrides[get_db] = sessions
+        auth_service._rate_buckets.clear()
+        monkeypatch.setenv("ZTD_ARGON2_TIME_COST", "1")
+        monkeypatch.setenv("ZTD_ARGON2_MEMORY_COST", "1024")
+        try:
+            with Session(eng) as s:
+                s.add(AppUser(
+                    username="admin",
+                    password_hash=hash_password("Correct-Horse-9!"),
+                    role="ADMIN", is_active=True,
+                ))
+                s.commit()
+            client = TestClient(app)
+            r = client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "Correct-Horse-9!"},
+            )
+            assert r.status_code == 200, r.text
+            resp = client.post(
+                "/api/v1/bootstrap/raspberry",
+                json=_wifi_base(
+                    ztd_device_id="raspi-api-test",
+                    provisioning_url="https://100.105.163.126",
+                ),
+            )
+            assert resp.status_code == 200
+            assert "ZTD_DEVICE_ID=raspi-api-test" in resp.text
+            assert "PROVISIONING_URL=https://100.105.163.126" in resp.text
+        finally:
+            app.dependency_overrides.clear()
+            auth_service._rate_buckets.clear()
+            eng.dispose()
 
 
 class TestBootstrapInstallsAgentV2:

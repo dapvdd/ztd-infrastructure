@@ -8,3 +8,10 @@ paho-mqtt>=2.0.0
 # Dashboard BFF session cookies (F-04): URLSafeTimedSerializer. Lazily
 # imported by dashboard_bff._signer(); missing at runtime -> 500 on login.
 itsdangerous>=2.1.0
+# Sprint 5 centralized auth: Argon2id password hashing (PHC format).
+# OFFLINE VPS: wheels are staged at /home/firza/deploy-artifacts/
+#   argon2_cffi-23.1.0-py3-none-any.whl                  (sha256 c670642b…)
+#   argon2_cffi_bindings-21.2.0-cp36-abi3-manylinux_2_17_x86_64.whl (b746dba8…)
+# and installed via `pip install --no-index <wheels>` during image build.
+argon2-cffi==23.1.0
+argon2-cffi-bindings==21.2.0

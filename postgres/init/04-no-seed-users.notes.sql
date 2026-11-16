@@ -1,0 +1,5 @@
+-- Sprint 5 — fresh-install seed: NO users are seeded automatically.
+-- The first admin is provisioned out-of-band by the operator via:
+--   scripts/create-first-admin.py   (docker exec one-shot; see
+--   docs/SPRINT5-AUTH.md §Initial admin bootstrap)
+-- No default passwords, no public signup endpoint.
