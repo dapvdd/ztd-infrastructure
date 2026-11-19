@@ -1,0 +1,78 @@
+{
+  "schema_version": "3",
+  "stage": "OPERATIONAL",
+  "device_id": "raspi-local-01",
+  "plan_id": "plan-op-0001",
+  "desired_revision": 2,
+  "issued_at": "2026-11-19T10:00:00Z",
+  "expires_at": "2026-11-19T11:00:00Z",
+  "content_digest": "sha256:23f6897c4900be0ecca40f60adeb6aaf5d6808c1f751b130d6f90317c98b6a54",
+  "required_agent_version": "sprint6-proposed-agent-1",
+  "capabilities": ["typed_executor_v1", "local_apply_v1", "execution_ack_v1"],
+  "releases": [
+    {
+      "release_id": "rel-local-0001",
+      "source_commit": "469ee63064f7de0c139579df59be6da7b75418c3",
+      "archive_sha256": "sha256:d633d516f9b021fa5ee84549afaf975616cf6fbe1e887951090149edf7aa524d",
+      "os_id": "debian-13",
+      "architecture": "aarch64"
+    }
+  ],
+  "broker": {
+    "mqtt_user": "local-broker-user",
+    "credential_version": "broker-cred-v1",
+    "mqtt_host": "broker.local.invalid",
+    "mqtt_port": 1883
+  },
+  "runtime": {
+    "release_id": "rel-local-0001",
+    "topic": "hs109rs/#"
+  },
+  "cache": {
+    "path": "/var/lib/ztd-local/edge-cache.sqlite3",
+    "max_pending_rows": 20000
+  },
+  "services": [
+    {"unit": "ztd-local-broker.service"},
+    {"unit": "ztd-local-agent.service"}
+  ],
+  "assignments": [
+    {
+      "name": "local-broker",
+      "operation": "ensure_present",
+      "executor": "mosquitto_v1",
+      "release_id": "rel-local-0001"
+    }
+  ],
+  "rollback_policy": {
+    "retained_revisions": 2,
+    "previous_release_ids": []
+  },
+  "binding": {
+    "monitoring_instance_id": "monitoring-instance-1",
+    "binding_id": "binding-0001",
+    "binding_generation": 1,
+    "hub_id": "raspi-local-01"
+  },
+  "authorization": {
+    "approval_revision": 2,
+    "expires_at": "2026-11-20T10:00:00Z",
+    "credential_version": "cred-v1",
+    "x-no-connectivity-inference": true
+  },
+  "monitoring": {
+    "ingest_url": "https://monitoring.example.invalid/api/iot",
+    "devices_url": "https://monitoring.example.invalid/api/devices",
+    "commands_url": "https://monitoring.example.invalid/api/hub/commands",
+    "unapproved_url": "https://monitoring.example.invalid/api/iot/unapproved",
+    "ca_artifact_id": "ca-artifact-1"
+  },
+  "secret_refs": [
+    {
+      "role": "hub_credential",
+      "envelope_id": "envelope-0001",
+      "version": "cred-v1"
+    }
+  ],
+  "x-evidence": "ztd_proposal"
+}

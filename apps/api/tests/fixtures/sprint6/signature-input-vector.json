@@ -1,0 +1,28 @@
+{
+  "evidence": "ztd_proposal",
+  "algorithm": "HMAC-SHA256",
+  "test_key_is_synthetic": true,
+  "raw_body": "{\"event_id\":\"approval-event-0001\",\"status\":\"APPROVED\"}",
+  "inputs": {
+    "proposed_field_order": [
+      "version",
+      "method",
+      "target",
+      "issued_at",
+      "nonce",
+      "body_sha256"
+    ],
+    "version": "ztd-v3-signature-1",
+    "method": "PUT",
+    "target": "/api/v3/provisioning/integrations/monitoring/approval_events/approval-event-0001",
+    "issued_at": "2026-11-19T10:00:00Z",
+    "nonce": "test-only-nonce-0001",
+    "body_sha256": "5f9b20136766c13448c2309ec9672ec989185bae82aba0454f8855acc3426b53"
+  },
+  "headers": {
+    "key_id": "test-only-key-1"
+  },
+  "x-monitoring-sender": "DOES_NOT_EXIST_AT_PINNED_SOURCE",
+  "x-wire-format-status": "NOT_FROZEN_PENDING_M04_M10",
+  "x-note": "Proposed receiver inputs only, not an approved HMAC wire format. No Monitoring callback sender exists at the pinned source (M04/M10) and no real key value is present. body_sha256 is the verified SHA-256 of raw_body above; the remaining fields are illustrative receiver inputs whose byte encoding, header names and verification rule are NOT FROZEN and require owner decision under M04/M10. No signer or verifier is implemented by this vector."
+}

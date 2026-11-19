@@ -1,0 +1,36 @@
+{
+  "evidence": "ztd_proposal",
+  "canonicalization": "Pinned literal UTF-8 bytes: alphabetically sorted keys, no whitespace. These vectors pin exact bytes; no general RFC 8785 encoder is implemented.",
+  "cases": [
+    {
+      "name": "base",
+      "parsed_body": {
+        "device_id": "raspi-local-01",
+        "plan_id": "plan-op-0001",
+        "revision": 2
+      },
+      "canonical_bytes": "{\"device_id\":\"raspi-local-01\",\"plan_id\":\"plan-op-0001\",\"revision\":2}",
+      "content_digest": "sha256:72c4616bcc709510cd902aa00b920ba0fc2678f606a73814970ac5478d2f9ab2"
+    },
+    {
+      "name": "changed_value",
+      "parsed_body": {
+        "device_id": "raspi-local-01",
+        "plan_id": "plan-op-0001",
+        "revision": 3
+      },
+      "canonical_bytes": "{\"device_id\":\"raspi-local-01\",\"plan_id\":\"plan-op-0001\",\"revision\":3}",
+      "content_digest": "sha256:bba7755e9394c490763be32095847c10b9152d31e9d3c44484121740ec450d14"
+    },
+    {
+      "name": "reordered_keys_same_digest",
+      "parsed_body": {
+        "revision": 2,
+        "plan_id": "plan-op-0001",
+        "device_id": "raspi-local-01"
+      },
+      "canonical_bytes": "{\"device_id\":\"raspi-local-01\",\"plan_id\":\"plan-op-0001\",\"revision\":2}",
+      "content_digest": "sha256:72c4616bcc709510cd902aa00b920ba0fc2678f606a73814970ac5478d2f9ab2"
+    }
+  ]
+}

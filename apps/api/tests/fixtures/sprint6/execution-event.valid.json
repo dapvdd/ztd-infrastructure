@@ -1,0 +1,30 @@
+{
+  "schema_version": "3",
+  "event_id": "event-0001",
+  "device_id": "raspi-local-01",
+  "stage": "OPERATIONAL",
+  "plan_id": "plan-op-0001",
+  "desired_revision": 2,
+  "content_digest": "sha256:72c4616bcc709510cd902aa00b920ba0fc2678f606a73814970ac5478d2f9ab2",
+  "plan_revision": 2,
+  "plan_digest": "sha256:72c4616bcc709510cd902aa00b920ba0fc2678f606a73814970ac5478d2f9ab2",
+  "binding_generation": 1,
+  "attempt_id": "attempt-0001",
+  "sequence": 1,
+  "result": "LOCAL_APPLIED",
+  "module_results": [
+    {
+      "name": "local-broker",
+      "result": "succeeded",
+      "digest": "sha256:d633d516f9b021fa5ee84549afaf975616cf6fbe1e887951090149edf7aa524d"
+    }
+  ],
+  "artifact_digests": [
+    "sha256:d633d516f9b021fa5ee84549afaf975616cf6fbe1e887951090149edf7aa524d"
+  ],
+  "previous_safe_release": "rel-local-0000",
+  "error_code": null,
+  "disposition": null,
+  "device_timestamp": "2026-11-19T10:05:00Z",
+  "boot_id": "boot-0001"
+}

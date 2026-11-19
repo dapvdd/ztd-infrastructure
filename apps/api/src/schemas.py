@@ -1,43 +1,41 @@
-import re
 from datetime import datetime
-from typing import Optional
-from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
-class DeviceWhitelistCreate(BaseModel):
-    mac_address: str = Field(..., example="b8:27:eb:11:22:33", description="Physical MAC address of the Raspberry Pi")
-    name: Optional[str] = Field(None, example="Raspberry Pi 2B - Sensor Hub")
-    device_token: Optional[str] = Field(None, example="ztd_tok_pi2b_lab", description="Unique device token (auto-generated if omitted)")
-    ip_address: Optional[str] = Field(None, example="192.168.1.50")
-    ssh_user: Optional[str] = Field("pi", example="pi")
-    ssh_port: Optional[int] = Field(22, example=22)
+# Model untuk modul individual
+class ModuleItem(BaseModel):
+    name: str = Field(
+        ...,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$",
+        example="temperature",
+    )
+    version: str = Field("1.0.0", example="1.0.0")
+    enabled: bool = Field(True, example=True)
 
-    @field_validator("mac_address")
-    @classmethod
-    def validate_mac(cls, v: str) -> str:
-        clean_mac = v.strip().lower().replace("-", ":")
-        if not re.match(r"^([0-9a-f]{2}[:]){5}([0-9a-f]{2})$", clean_mac):
-            raise ValueError("Invalid MAC address format. Expected format: xx:xx:xx:xx:xx:xx")
-        return clean_mac
+# Payload saat Admin/Dashboard ingin deploy modul ke Raspi
+class DeviceConfigPayload(BaseModel):
+    room_id: Optional[str] = Field(None, example="room-b")
+    modules: List[ModuleItem]
 
+# Skema response data perangkat untuk Dashboard
 class DeviceResponse(BaseModel):
-    id: UUID
-    mac_address: str
-    name: Optional[str]
-    ip_address: Optional[str]
-    device_token: Optional[str]
-    status: str
-    ssh_user: Optional[str]
-    ssh_port: Optional[int]
+    id: str = Field(..., example="raspi-a1b2c3")
+    hostname: Optional[str] = None
+    room_id: Optional[str] = None
+    ip_address: Optional[str] = None
+    status: str = Field("ONLINE", example="ONLINE")
     created_at: datetime
-    provisioned_at: Optional[datetime]
-    last_seen: Optional[datetime]
+    last_seen: Optional[datetime] = None
+    uptime_seconds: Optional[int] = None
+    cpu_temp: Optional[float] = None
+    modules: Optional[List[str]] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
 
-class DeviceDeployRequest(BaseModel):
-    ip_address: Optional[str] = Field(None, example="192.168.1.50", description="IP address of the target Raspberry Pi")
-    ssh_password: Optional[str] = Field("raspberry", example="raspberry", description="SSH password for the Pi user")
-    ssh_port: Optional[int] = Field(22, example=22)
-    mqtt_host: Optional[str] = Field(None, example="192.168.1.100", description="IP/Hostname of the MQTT server that the Pi should connect to")
+# Skema untuk 4 Kartu Metrik di Dashboard Atas
+class DashboardSummary(BaseModel):
+    total_devices: int
+    online_devices: int
+    offline_devices: int
+    rooms_count: int

@@ -1,0 +1,336 @@
+{
+  "$defs": {
+    "AssignmentSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "executor": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Executor",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "ensure_present",
+            "ensure_absent",
+            "configure"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "release_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Release Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "operation",
+        "executor",
+        "release_id"
+      ],
+      "title": "AssignmentSpec",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    },
+    "BrokerSpec": {
+      "additionalProperties": false,
+      "description": "Nonsecret local-broker addressing plus a credential reference.\n\nmqtt_user is mandatory and nonsecret; the secret itself is only a version\nhandle, never a value (mirrors the v2 HubConfig omission rationale).",
+      "properties": {
+        "credential_version": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Credential Version",
+          "type": "string"
+        },
+        "mqtt_host": {
+          "maxLength": 253,
+          "minLength": 1,
+          "title": "Mqtt Host",
+          "type": "string"
+        },
+        "mqtt_port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Mqtt Port",
+          "type": "integer"
+        },
+        "mqtt_user": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Mqtt User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mqtt_user",
+        "credential_version",
+        "mqtt_host",
+        "mqtt_port"
+      ],
+      "title": "BrokerSpec",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    },
+    "CacheSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "max_pending_rows": {
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Max Pending Rows",
+          "type": "integer"
+        },
+        "path": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "max_pending_rows"
+      ],
+      "title": "CacheSpec",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    },
+    "ReleaseDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Architecture",
+          "type": "string"
+        },
+        "archive_sha256": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Archive Sha256",
+          "type": "string"
+        },
+        "os_id": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Os Id",
+          "type": "string"
+        },
+        "release_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Release Id",
+          "type": "string"
+        },
+        "source_commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Source Commit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "release_id",
+        "source_commit",
+        "archive_sha256",
+        "os_id",
+        "architecture"
+      ],
+      "title": "ReleaseDescriptor",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    },
+    "RollbackPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "previous_release_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Release Ids",
+          "type": "array"
+        },
+        "retained_revisions": {
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Retained Revisions",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "retained_revisions"
+      ],
+      "title": "RollbackPolicy",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    },
+    "RuntimeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "release_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Release Id",
+          "type": "string"
+        },
+        "topic": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        }
+      },
+      "required": [
+        "release_id",
+        "topic"
+      ],
+      "title": "RuntimeSpec",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    },
+    "ServiceSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "unit": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unit"
+      ],
+      "title": "ServiceSpec",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    }
+  },
+  "$id": "https://ztd.invalid/schemas/sprint6/commissioning-plan.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assignments": {
+      "items": {
+        "$ref": "#/$defs/AssignmentSpec"
+      },
+      "title": "Assignments",
+      "type": "array"
+    },
+    "broker": {
+      "$ref": "#/$defs/BrokerSpec"
+    },
+    "cache": {
+      "$ref": "#/$defs/CacheSpec"
+    },
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "content_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Content Digest",
+      "type": "string"
+    },
+    "desired_revision": {
+      "minimum": 1,
+      "title": "Desired Revision",
+      "type": "integer"
+    },
+    "device_id": {
+      "pattern": "^raspi-[a-z0-9-]{3,20}$",
+      "title": "Device Id",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "plan_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "releases": {
+      "items": {
+        "$ref": "#/$defs/ReleaseDescriptor"
+      },
+      "minItems": 1,
+      "title": "Releases",
+      "type": "array"
+    },
+    "required_agent_version": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Required Agent Version",
+      "type": "string"
+    },
+    "rollback_policy": {
+      "$ref": "#/$defs/RollbackPolicy"
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeSpec"
+    },
+    "schema_version": {
+      "const": "3",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "services": {
+      "items": {
+        "$ref": "#/$defs/ServiceSpec"
+      },
+      "title": "Services",
+      "type": "array"
+    },
+    "stage": {
+      "const": "LOCAL_INSTALL",
+      "title": "Stage",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "stage",
+    "device_id",
+    "plan_id",
+    "desired_revision",
+    "issued_at",
+    "expires_at",
+    "content_digest",
+    "required_agent_version",
+    "capabilities",
+    "releases",
+    "broker",
+    "runtime",
+    "cache",
+    "services",
+    "assignments",
+    "rollback_policy"
+  ],
+  "title": "LocalPlanModel",
+  "type": "object",
+  "x-evidence": "ztd_proposal",
+  "x-runtime-invariants": [
+    "expires_at must be after issued_at"
+  ],
+  "x-schema-conformance": "PROPOSAL_STRUCTURAL_ONLY; temporal/cross-field invariants are enforced by the test-module Pydantic validators, not by JSON Schema 2020-12; no conforming validator is installed in this environment"
+}

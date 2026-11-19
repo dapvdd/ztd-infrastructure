@@ -1,0 +1,24 @@
+[Unit]
+Description=ZTD V2 Pi Agent — authenticated provisioning client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ztd
+Group=ztd
+EnvironmentFile=/etc/ztd/agent.env
+ExecStart=/usr/bin/python3 /opt/ztd/agent_v2.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+# Harden: no new privileges, private /tmp, restricted access
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ztd /etc/ztd
+
+[Install]
+WantedBy=multi-user.target
