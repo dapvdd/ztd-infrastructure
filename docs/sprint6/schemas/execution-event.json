@@ -1,0 +1,220 @@
+{
+  "$defs": {
+    "ModuleResult": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Digest"
+        },
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "rolled_back",
+            "skipped"
+          ],
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "result"
+      ],
+      "title": "ModuleResult",
+      "type": "object",
+      "x-evidence": "ztd_proposal"
+    }
+  },
+  "$id": "https://ztd.invalid/schemas/sprint6/execution-event.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifact_digests": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Artifact Digests",
+      "type": "array"
+    },
+    "attempt_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "binding_generation": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Binding Generation"
+    },
+    "boot_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Boot Id",
+      "type": "string"
+    },
+    "content_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Content Digest",
+      "type": "string"
+    },
+    "desired_revision": {
+      "minimum": 1,
+      "title": "Desired Revision",
+      "type": "integer"
+    },
+    "device_id": {
+      "pattern": "^raspi-[a-z0-9-]{3,20}$",
+      "title": "Device Id",
+      "type": "string"
+    },
+    "device_timestamp": {
+      "format": "date-time",
+      "title": "Device Timestamp",
+      "type": "string"
+    },
+    "disposition": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Disposition"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "event_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Event Id",
+      "type": "string"
+    },
+    "module_results": {
+      "items": {
+        "$ref": "#/$defs/ModuleResult"
+      },
+      "title": "Module Results",
+      "type": "array"
+    },
+    "plan_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Plan Digest",
+      "type": "string"
+    },
+    "plan_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "plan_revision": {
+      "minimum": 1,
+      "title": "Plan Revision",
+      "type": "integer"
+    },
+    "previous_safe_release": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Previous Safe Release"
+    },
+    "result": {
+      "enum": [
+        "RECEIVED",
+        "IN_PROGRESS",
+        "LOCAL_APPLIED",
+        "FAILED",
+        "ROLLED_BACK"
+      ],
+      "title": "Result",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "3",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sequence": {
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "stage": {
+      "enum": [
+        "LOCAL_INSTALL",
+        "OPERATIONAL"
+      ],
+      "title": "Stage",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "device_id",
+    "stage",
+    "plan_id",
+    "desired_revision",
+    "content_digest",
+    "plan_revision",
+    "plan_digest",
+    "attempt_id",
+    "sequence",
+    "result",
+    "module_results",
+    "artifact_digests",
+    "device_timestamp",
+    "boot_id"
+  ],
+  "title": "ExecutionEventModel",
+  "type": "object",
+  "x-evidence": "ztd_proposal",
+  "x-runtime-invariants": [
+    "(desired_revision, content_digest) must equal (plan_revision, plan_digest)"
+  ],
+  "x-schema-conformance": "PROPOSAL_STRUCTURAL_ONLY; temporal/cross-field invariants are enforced by the test-module Pydantic validators, not by JSON Schema 2020-12; no conforming validator is installed in this environment"
+}

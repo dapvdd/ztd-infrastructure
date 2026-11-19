@@ -1,0 +1,147 @@
+{
+  "$id": "https://ztd.invalid/schemas/sprint6/approval-event.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "APPROVED"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expires_at"
+        ]
+      }
+    }
+  ],
+  "description": "Immutable proposed callback body. No sender is assumed to exist.",
+  "properties": {
+    "actor": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Actor",
+      "type": "string"
+    },
+    "binding_generation": {
+      "minimum": 1,
+      "title": "Binding Generation",
+      "type": "integer"
+    },
+    "binding_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "credential_version": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Credential Version",
+      "type": "string"
+    },
+    "device_id": {
+      "pattern": "^raspi-[a-z0-9-]{3,20}$",
+      "title": "Device Id",
+      "type": "string"
+    },
+    "event_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Event Id",
+      "type": "string"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expires At"
+    },
+    "hub_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Hub Id",
+      "type": "string"
+    },
+    "monitoring_instance_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Monitoring Instance Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "3",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "APPROVED",
+        "REJECTED",
+        "REVOKED"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "monitoring_instance_id",
+    "device_id",
+    "hub_id",
+    "binding_id",
+    "binding_generation",
+    "request_id",
+    "revision",
+    "status",
+    "actor",
+    "occurred_at",
+    "expires_at",
+    "credential_version"
+  ],
+  "title": "ApprovalEventModel",
+  "type": "object",
+  "x-approval-gate": "M04/M10",
+  "x-evidence": "ztd_proposal",
+  "x-monitoring-sender": "DOES_NOT_EXIST_AT_PINNED_SOURCE",
+  "x-no-connectivity-inference": true,
+  "x-runtime-invariants": [
+    "APPROVED expiry must be after the receiver-supplied receipt time (explicit, never wall-clock)"
+  ],
+  "x-schema-conformance": "PROPOSAL_STRUCTURAL_ONLY; temporal/cross-field invariants are enforced by the test-module Pydantic validators, not by JSON Schema 2020-12; no conforming validator is installed in this environment"
+}

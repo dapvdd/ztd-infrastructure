@@ -1,0 +1,58 @@
+{
+  "evidence": "source_verified",
+  "commit": "3afa0a954fac1b92cf9df7a29ed13bc82b5352e6",
+  "env_keys": [
+    "HUB_KEY",
+    "HUB_ID",
+    "MQTT_USER",
+    "MQTT_PASS",
+    "MQTT_HOST",
+    "MQTT_PORT",
+    "MQTT_TOPIC",
+    "SERVER_URL",
+    "SERVER_DEVICES_URL",
+    "SERVER_COMMANDS_URL",
+    "SERVER_UNAPPROVED_URL",
+    "TLS_CERT_PATH",
+    "EDGE_CACHE_DB_PATH",
+    "MAX_PENDING_ROWS",
+    "REPLAY_BATCH_SIZE",
+    "REPLAY_PACING_DELAY",
+    "REPLAY_INTERVAL",
+    "ALLOW_INSECURE_DEV_KEYS"
+  ],
+  "endpoints": [
+    "POST /api/iot",
+    "GET /api/devices",
+    "GET /api/hub/commands",
+    "POST /api/iot/unapproved"
+  ],
+  "headers": [
+    "X-Hub-ID",
+    "X-Hub-Key"
+  ],
+  "defaults": {
+    "MQTT_TOPIC": "hs109rs/#",
+    "MAX_PENDING_ROWS": 20000,
+    "REPLAY_BATCH_SIZE": 25,
+    "REPLAY_PACING_DELAY": 0.35,
+    "REPLAY_INTERVAL": 5.0
+  },
+  "source_links": [
+    "hub/main.py:28-89",
+    "hub/main.py:61-72",
+    "server/app/routers/iot.py:211",
+    "server/app/routers/devices.py:573-627",
+    "server/app/routers/commands.py:20-130"
+  ],
+  "authority_notes": {
+    "not_approval": [
+      "202 pending_approval",
+      "GET /api/devices",
+      "POST /api/hub/commands/{id}/delivered"
+    ],
+    "authority_loss": [
+      "401 from Monitoring"
+    ]
+  }
+}

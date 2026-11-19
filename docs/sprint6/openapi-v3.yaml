@@ -1,0 +1,328 @@
+openapi: 3.1.0
+info:
+  title: Sprint 6 proposed ZTD v3 provisioning contract
+  version: 0.0.0-proposal
+  x-evidence: ztd_proposal
+  x-status: CONTRACT_PROPOSAL_NOT_IMPLEMENTED
+  x-approval-state: M01-M13_UNANSWERED_NOT_APPROVED
+  x-auth-model: >-
+    All schemes are proposed ZTD-owned contracts. No credential issuer, key
+    escrow or Monitoring callback sender exists at the pinned source; no
+    Monitoring authentication contract is assumed or invented (M01/M02/M04/M10).
+  description: >-
+    ZTD-owned proposed v3 provisioning surface for review only. No route,
+    handler, credential issuer, key escrow or callback sender is implemented,
+    wired or activated. Schema file references are relative to this document's
+    own directory (docs/sprint6/). Errors use application/problem+json with an illustrative
+    ztd.invalid type namespace pending replacement by a project-owned URI.
+    Approval-gate codes map to the Monitoring team decision register; every
+    gate remains UNANSWERED / NOT APPROVED. Runtime source names are pinned in
+    the source-verified fixture produced by Task 1 and are not restated here.
+servers:
+  - url: https://api.ztd.invalid
+    description: Illustrative non-routable base URL; no deployment exists.
+components:
+  securitySchemes:
+    DeviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Proposed device-scoped recipient-bound credential; no issuer exists.
+      x-status: PROPOSED_NO_ISSUER
+    AdminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Proposed BFF-mediated admin credential; no issuer exists.
+      x-status: PROPOSED_NO_ISSUER
+    MonitoringSender:
+      type: http
+      scheme: bearer
+      bearerFormat: HMAC-SHA256
+      description: >-
+        Proposed Monitoring callback sender authentication. No sender exists at
+        the pinned source; see gate M04/M10.
+      x-status: PROPOSED_NO_SENDER
+  responses:
+    Problem:
+      description: RFC 7807-style problem; illustrative ztd.invalid type namespace.
+      content: &problem_content
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [status, title, detail, instance, code, correlation_id]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Illustrative https://ztd.invalid/problems/<code> namespace.
+        status:
+          type: integer
+        title:
+          type: string
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+          description: Safe stable machine code; no stack trace or secret.
+        correlation_id:
+          type: string
+paths:
+  '/api/v3/provisioning/bootstrap_claims':
+    x-approval-gate: M01/M02
+    post:
+      summary: Propose an enrollment claim for one intended device.
+      operationId: createBootstrapClaim
+      x-auth-status: PROPOSED_NO_ISSUER_ADMIN_BFF
+      security:
+        - AdminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Claim request body; shape not frozen (M02).
+      responses:
+        '201':
+          description: Claim created with controlled transfer metadata.
+        '409':
+          description: Existing active claim conflict.
+          content: *problem_content
+        '422':
+          description: Unsupported capabilities.
+          content: *problem_content
+  '/api/v3/provisioning/bootstrap_claims/{claim_id}/redemptions':
+    x-approval-gate: M02/M09
+    post:
+      summary: Redeem a single-use claim bound to a device public key.
+      operationId: redeemBootstrapClaim
+      x-auth-status: PROPOSED_POSSESSION_PROOF_NO_ISSUER
+      security: []
+      parameters:
+        - name: claim_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Bound encrypted credential envelope created.
+        '200':
+          description: Same-bound idempotent retry.
+        '409':
+          description: Competing redemption conflict.
+          content: *problem_content
+        '410':
+          description: Expired or revoked claim.
+          content: *problem_content
+  '/api/v3/provisioning/commissioning_plan':
+    x-approval-gate: NONE_ZTD_LOCAL_ONLY
+    get:
+      summary: Return the immutable nontransmitting LOCAL_INSTALL plan.
+      operationId: getCommissioningPlan
+      x-auth-status: PROPOSED_NO_ISSUER_DEVICE
+      security:
+        - DeviceBearer: []
+      responses:
+        '200':
+          description: Immutable revisioned local commissioning plan.
+          content:
+            application/json:
+              schema:
+                $ref: schemas/commissioning-plan.json
+        '403':
+          description: Cross-device access denied.
+          content: *problem_content
+        '409':
+          description: Binding or capability conflict.
+          content: *problem_content
+  '/api/v3/provisioning/operational_manifest':
+    x-approval-gate: M01/M02/M04/M05/M06/M08
+    get:
+      summary: Return the authority-gated OPERATIONAL manifest.
+      operationId: getOperationalManifest
+      x-auth-status: PROPOSED_NO_ISSUER_DEVICE
+      security:
+        - DeviceBearer: []
+      responses:
+        '200':
+          description: Proposed OPERATIONAL manifest; not operational evidence.
+          content:
+            application/json:
+              schema:
+                $ref: schemas/operational-manifest.json
+        '403':
+          description: Pending, expired or revoked approval.
+          content: *problem_content
+        '409':
+          description: Missing or withdrawn runtime contract.
+          content: *problem_content
+  '/api/v3/provisioning/credential_envelopes/{envelope_id}':
+    x-approval-gate: M02/M09
+    get:
+      summary: Retrieve a recipient-bound ciphertext envelope (no-store).
+      operationId: getCredentialEnvelope
+      x-auth-status: PROPOSED_NO_ISSUER_DEVICE
+      security:
+        - DeviceBearer: []
+      parameters:
+        - name: envelope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Opaque ciphertext envelope.
+        '403':
+          description: Recipient binding mismatch.
+          content: *problem_content
+        '410':
+          description: Expired or retired envelope.
+          content: *problem_content
+  '/api/v3/provisioning/execution_events/{event_id}':
+    x-approval-gate: M01/M05/M08
+    put:
+      summary: Report a tuple-bound execution result event.
+      operationId: putExecutionEvent
+      x-auth-status: PROPOSED_NO_ISSUER_DEVICE
+      security:
+        - DeviceBearer: []
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: schemas/execution-event.json
+      responses:
+        '201':
+          description: New event accepted.
+        '200':
+          description: Exact replay accepted.
+        '409':
+          description: Collision or stale-snapshot conflict.
+          content: *problem_content
+  '/api/v3/provisioning/heartbeats/{boot_id}/{sequence}':
+    x-approval-gate: NONE_ZTD_LOCAL_ONLY
+    put:
+      summary: Device-scoped monotonic liveness sample; no approval gate.
+      operationId: putHeartbeat
+      x-auth-status: PROPOSED_NO_ISSUER_DEVICE
+      security:
+        - DeviceBearer: []
+      parameters:
+        - name: boot_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sequence
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '201':
+          description: New sequence sample accepted.
+        '200':
+          description: Exact replay accepted.
+        '409':
+          description: Same sequence with different body.
+          content: *problem_content
+  '/api/v3/provisioning/devices/{device_id}/commissioning_status':
+    x-approval-gate: M01/M05
+    get:
+      summary: Return independent commissioning-status dimensions and evidence.
+      operationId: getCommissioningStatus
+      x-auth-status: PROPOSED_NO_ISSUER_ADMIN_BFF
+      security:
+        - AdminBearer: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status across independent dimensions with timestamps.
+        '403':
+          description: Cross-device access denied.
+          content: *problem_content
+  '/api/v3/provisioning/integrations/monitoring/approval_events/{event_id}':
+    x-approval-gate: M04/M10
+    put:
+      summary: Proposed Monitoring approval callback receiver; no sender exists.
+      operationId: putMonitoringApprovalEvent
+      x-auth-status: PROPOSED_NO_SENDER
+      security:
+        - MonitoringSender: []
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: schemas/approval-event.json
+      responses:
+        '201':
+          description: New approval event accepted.
+        '200':
+          description: Exact replay accepted.
+        '403':
+          description: Auth, replay or mapping failure.
+          content: *problem_content
+        '409':
+          description: Revision or binding-generation conflict.
+          content: *problem_content
+  '/api/v3/provisioning/devices/{device_id}/execution_events':
+    x-approval-gate: M01/M05
+    get:
+      summary: Cursor-paginated execution-event history for one device.
+      operationId: listDeviceExecutionEvents
+      x-auth-status: PROPOSED_NO_ISSUER_ADMIN_BFF
+      security:
+        - AdminBearer: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+      responses:
+        '200':
+          description: Stable-ordered page of execution events.
+        '403':
+          description: Cross-device access denied.
+          content: *problem_content

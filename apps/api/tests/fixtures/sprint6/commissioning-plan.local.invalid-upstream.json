@@ -1,0 +1,57 @@
+{
+  "schema_version": "3",
+  "stage": "LOCAL_INSTALL",
+  "device_id": "raspi-local-01",
+  "plan_id": "plan-local-0001",
+  "desired_revision": 1,
+  "issued_at": "2026-11-19T10:00:00Z",
+  "expires_at": "2026-11-19T11:00:00Z",
+  "content_digest": "sha256:caad661dca602d5ab2fa06951a6477924adab6d44661ea388e9308e62c11cd4d",
+  "required_agent_version": "sprint6-proposed-agent-1",
+  "capabilities": ["typed_executor_v1", "local_apply_v1"],
+  "releases": [
+    {
+      "release_id": "rel-local-0001",
+      "source_commit": "469ee63064f7de0c139579df59be6da7b75418c3",
+      "archive_sha256": "sha256:d633d516f9b021fa5ee84549afaf975616cf6fbe1e887951090149edf7aa524d",
+      "os_id": "debian-13",
+      "architecture": "aarch64"
+    }
+  ],
+  "broker": {
+    "mqtt_user": "local-broker-user",
+    "credential_version": "broker-cred-v1",
+    "mqtt_host": "broker.local.invalid",
+    "mqtt_port": 1883
+  },
+  "runtime": {
+    "release_id": "rel-local-0001",
+    "topic": "hs109rs/#"
+  },
+  "cache": {
+    "path": "/var/lib/ztd-local/edge-cache.sqlite3",
+    "max_pending_rows": 20000
+  },
+  "services": [
+    {"unit": "ztd-local-broker.service"},
+    {"unit": "ztd-local-agent.service"}
+  ],
+  "assignments": [
+    {
+      "name": "local-broker",
+      "operation": "ensure_present",
+      "executor": "mosquitto_v1",
+      "release_id": "rel-local-0001"
+    }
+  ],
+  "rollback_policy": {
+    "retained_revisions": 2,
+    "previous_release_ids": []
+  },
+  "binding": {
+    "monitoring_instance_id": "example-monitoring",
+    "binding_id": "example-binding-1",
+    "binding_generation": 1,
+    "hub_id": "example-hub-1"
+  }
+}

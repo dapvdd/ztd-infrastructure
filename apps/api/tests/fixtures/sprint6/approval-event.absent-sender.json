@@ -1,0 +1,21 @@
+{
+  "expected_ztd_status": "UNKNOWN",
+  "authentication_verification": "UNVERIFIED_NOT_TESTED",
+  "reason": "UNKNOWN is a proposed expectation only, not an executed authentication decision. Sender authentication is unverified: no Monitoring callback sender exists at the pinned source (M04/M10). This structurally valid body does not authenticate a sender or establish approval.",
+  "payload": {
+    "schema_version": "3",
+    "event_id": "approval-event-absent-0001",
+    "monitoring_instance_id": "monitoring-instance-1",
+    "device_id": "raspi-local-01",
+    "hub_id": "hub-op-example-1",
+    "binding_id": "binding-0001",
+    "binding_generation": 1,
+    "request_id": "request-0001",
+    "revision": 1,
+    "status": "APPROVED",
+    "occurred_at": "2026-11-19T10:00:00Z",
+    "expires_at": "2026-11-20T10:00:00Z",
+    "credential_version": "cred-v1",
+    "actor": "illustrative-unverified-actor"
+  }
+}

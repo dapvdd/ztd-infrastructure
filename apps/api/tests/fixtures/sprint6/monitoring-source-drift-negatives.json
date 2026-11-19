@@ -1,0 +1,19 @@
+{
+  "evidence": "source_verified",
+  "names": [
+    "SERVER_ALERT_URL",
+    "HUB_NAME",
+    "/api/iot/telemetry",
+    "hub/V5/main.py",
+    "ALLOW_INSECURE_DEV_KEYS=true"
+  ],
+  "rule": "negative_evidence_only_not_configuration",
+  "locations": [
+    "hub/.env.example",
+    "hub/README.txt",
+    "docs/PRODUCTION_DEPLOYMENT_GUIDE.md",
+    "tools/deploy_pi_edge.py",
+    "tools/verify_prod_env.py",
+    "hub/AGENTS.md"
+  ]
+}
