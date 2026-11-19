@@ -1,0 +1,7 @@
+{
+  "device_id": "raspi-abc123",
+  "revision": 0,
+  "approval_status": "PENDING",
+  "manifest_hash": null,
+  "applied_at": null
+}

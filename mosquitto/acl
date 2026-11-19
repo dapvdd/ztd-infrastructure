@@ -1,0 +1,54 @@
+# ZTD MQTT ACL (F-07).
+# Written by operators; mounted read-only at /mosquitto/config/acl.
+#
+# Topic vocabulary:
+#   iot/device/<id>/register|heartbeat|metrics|deployment — edge ➔ VPS
+#   iot/device/<id>/config      — retained desired-state (backend ➔ edge)
+#   hs109rs/<sensor>/data       — ESP sensor data forwarded by the gateway
+#   ztd/devices/+/status        — per-device status published by the backend
+#
+# Principles:
+#   - backend: full access, plus explicit $SYS read for the authenticated
+#     healthcheck (MQTT wildcards never match $-prefixed topics, so a bare
+#     `#` does NOT cover $SYS)
+#   - gateway agent (<gateway-id>): one explicit block per gateway — write
+#     its own iot/device/<id>/... telemetry topics and status, read its own
+#     config. Do NOT use `pattern` rules for gateways: in mosquitto a
+#     pattern rule applies to EVERY user, so `pattern write hs109rs/#`
+#     would silently grant the read-only dashboard user write access.
+#   - dashboard user: read-only telemetry/status, no writes, no config reads
+#
+# NOTE: this file must have LF line endings. mosquitto 2.x parses CRLF
+# values literally ("false\r" != "false") and silently misconfigures the
+# broker. .gitattributes enforces LF for mosquitto/*.
+
+# ---- backend service -------------------------------------------------------
+user ztd-backend
+topic readwrite #
+topic read $SYS/#
+
+# ---- gateway agents (one block per Raspberry Pi gateway) -------------------
+# Username convention: gw-<gateway-id>, e.g. gw-raspi-stage-01.
+# Operators copy this template per gateway and keep it reviewed like code.
+#user gw-<gateway-id>
+#topic write iot/device/gw-<gateway-id>/register
+#topic write iot/device/gw-<gateway-id>/heartbeat
+#topic write iot/device/gw-<gateway-id>/metrics
+#topic write iot/device/gw-<gateway-id>/deployment
+#topic read iot/device/gw-<gateway-id>/config
+#topic write ztd/devices/gw-<gateway-id>/status
+#topic write hs109rs/#
+
+user gw-raspi-stage-01
+topic write iot/device/gw-raspi-stage-01/register
+topic write iot/device/gw-raspi-stage-01/heartbeat
+topic write iot/device/gw-raspi-stage-01/metrics
+topic write iot/device/gw-raspi-stage-01/deployment
+topic read iot/device/gw-raspi-stage-01/config
+topic write ztd/devices/gw-raspi-stage-01/status
+topic write hs109rs/#
+
+# ---- dashboard (read-only telemetry over WebSocket via nginx) --------------
+user ztd-dashboard
+topic read hs109rs/#
+topic read ztd/devices/+/status

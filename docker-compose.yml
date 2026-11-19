@@ -29,13 +29,23 @@ services:
     container_name: ztd-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8080:80"
+      - "8443:443"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # location snippets must NOT live in conf.d/ (nginx parses every
+      # conf.d/*.conf at http level, where `location` is illegal). They are
+      # mounted under snippets/ and included from inside the TLS server block.
+      - ./nginx/provisioning-v2.location.conf:/etc/nginx/snippets/provisioning-v2.location.conf:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+      - ../ztd-dashboard/dist:/usr/share/nginx/html:ro
+      # TLS certificates (fullchain.pem, privkey.pem) — provisioned out-of-band
+      # by scripts/harden-nginx.sh or an ACME flow; see F-06 remediation notes.
+      - ./nginx/certs:/etc/nginx/certs:ro
     networks:
       - ztd-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "curl -skf https://localhost/ || curl -f http://localhost/.well-known/acme-challenge/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -46,21 +56,76 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  ztd-backend:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    image: ztd-backend:latest
+    container_name: ztd-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: ztd-stage-db
+      MQTT_HOST: ztd-stage-mqtt
+      # F-07: broker rejects anonymous connections; credentials come from the
+      # operator's .env (MQTT_USER / MQTT_PASS, never committed). Declared
+      # here so the container always has them when present in .env; empty
+      # values fall back to the listener's anonymous-connect behavior.
+      MQTT_USER: ${MQTT_USER:-}
+      MQTT_PASS: ${MQTT_PASS:-}
+    ports:
+      - "127.0.0.1:${API_PORT:-18000}:8000"
+    volumes:
+      - ./apps/api/src:/app/src
+      - ./apps/agent:/app/agent:ro
+      # Dashboard BFF validates login against the same htpasswd nginx uses.
+      # Mounted read-only; path is handed to the backend via
+      # ZTD_DASHBOARD_HTPASSWD (operator .env, see README-mqtt-auth/ops docs).
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+    networks:
+      - ztd-network
+    depends_on:
+      ztd-db:
+        condition: service_healthy
+      ztd-mqtt:
+        condition: service_started
+
   ztd-mqtt:
     image: eclipse-mosquitto:2
     container_name: ztd-mqtt
     restart: unless-stopped
-    ports:
-      - "${MQTT_PORT:-1883}:1883"
-      - "${MQTT_WS_PORT:-9001}:9001"
+    # F-07: no broker ports published to the host. Backend and gateway agents
+    # reach 1883 over the internal network / Tailscale; the dashboard consumes
+    # MQTT-WS only through the nginx /mqtt location. LAN exposure is a
+    # deliberate, documented operator decision (see mosquitto/README-mqtt-auth.md).
+    expose:
+      - "1883"
+      - "9001"
+    # Credentials for the authenticated healthcheck; injected from the
+    # operator's .env (never committed). The healthcheck reuses the backend
+    # listener's credentials (MQTT_USER / MQTT_PASS) so there is exactly one
+    # source of truth — drift between two variable sets caused a silent
+    # unhealthy state in staging (stale MQTT_HEALTH_PASS). The healthcheck
+    # subscribes to $SYS/#, which requires `topic read $SYS/#` in the ACL
+    # for this user (a bare `#` never matches $-prefixed topics).
+    environment:
+      MQTT_HEALTH_USER: ${MQTT_USER:-}
+      MQTT_HEALTH_PASS: ${MQTT_PASS:-}
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      # Operator-generated (never committed): docker … mosquitto_passwd -c …
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     networks:
       - ztd-network
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -u dummy -P dummy || exit 0"]
+      # Anonymous is disabled; the healthcheck must authenticate. exit 0 is
+      # intentional ONLY as "broker answered"; -P wrong creds must fail, so we
+      # check the exit status of an authenticated sub instead of swallowing it.
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -u $$MQTT_HEALTH_USER -P $$MQTT_HEALTH_PASS"]
       interval: 30s
       timeout: 5s
       retries: 3
